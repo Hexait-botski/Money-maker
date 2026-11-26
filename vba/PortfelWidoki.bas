@@ -303,7 +303,7 @@ Public Function SetupHistoryColumns() As ListObject
 
     For i = LBound(specs) To UBound(specs)
         If Not ListColumnExists(lo, CStr(specs(i)(0))) Then
-            lo.ListColumns.Add.Name = CStr(specs(i)(0))
+            AddTableColumn lo, CStr(specs(i)(0))
         End If
     Next i
     If lo.ListRows.Count > 0 Then
@@ -316,6 +316,63 @@ Public Function SetupHistoryColumns() As ListObject
     End If
     Set SetupHistoryColumns = lo
 End Function
+
+' Dodaje kolumnê na koñcu tabeli bez przesuwania s¹siednich komórek.
+' (ListColumns.Add przesuwa w prawo wszystko w wierszach tabeli - w arkuszu
+' Dane rozsuwa³o to liczby, z których korzystaj¹ kafelki i wykresy.)
+Public Sub AddTableColumn(ByVal lo As ListObject, ByVal colName As String)
+    Dim nextCol As Range
+    Set nextCol = lo.Range.Columns(lo.Range.Columns.Count).Offset(0, 1)
+    nextCol.Clear
+    nextCol.Cells(1, 1).Value = colName
+    lo.Resize lo.Range.Resize(, lo.Range.Columns.Count + 1)
+End Sub
+
+' Czyœci obszar obliczeñ arkusza Dane (kolumny od M) i odtwarza tabele
+' dywidend i sprzeda¿y w ich miejscach (z zachowaniem danych). Naprawia
+' arkusz po wczeœniejszej wersji, która przesuwa³a komórki.
+Private Sub ResetDataArea(ByVal wsD As Worksheet)
+    Dim tblNames As Variant
+    Dim anchors As Variant
+    Dim saved(0 To 2) As Variant
+    Dim keep(1 To 3) As Variant
+    Dim lo As ListObject
+    Dim i As Long
+    Dim nR As Long
+    Dim nC As Long
+
+    tblNames = Array(DIV_HISTORY_TABLE, DIV_FORECAST_TABLE, REALIZED_TABLE)
+    anchors = Array("BA1", "BI1", "BS1")
+    For i = 1 To 3
+        keep(i) = wsD.Cells(29 + i, "AB").Value
+    Next i
+    For i = 0 To 2
+        Set lo = FindTable(CStr(tblNames(i)))
+        If Not lo Is Nothing Then
+            If lo.Parent.Name = wsD.Name Then
+                saved(i) = lo.Range.Value
+                lo.Delete
+            End If
+        End If
+    Next i
+
+    wsD.Range(wsD.Cells(1, 13), wsD.Cells(wsD.Rows.Count, 200)).Clear
+
+    For i = 1 To 3
+        If Not IsEmpty(keep(i)) And Not IsError(keep(i)) Then wsD.Cells(29 + i, "AB").Value = keep(i)
+    Next i
+    For i = 0 To 2
+        If IsArray(saved(i)) Then
+            nR = UBound(saved(i), 1)
+            nC = UBound(saved(i), 2)
+            wsD.Range(anchors(i)).Resize(nR, nC).Value = saved(i)
+            Set lo = wsD.ListObjects.Add(xlSrcRange, wsD.Range(anchors(i)).Resize(IIf(nR < 2, 2, nR), nC), , xlYes)
+            lo.Name = CStr(tblNames(i))
+            lo.TableStyle = "TableStyleLight1"
+            If nR < 2 Then lo.ListRows(1).Delete
+        End If
+    Next i
+End Sub
 
 Public Function ListColumnExists(ByVal lo As ListObject, ByVal colName As String) As Boolean
     Dim lc As ListColumn
@@ -444,6 +501,7 @@ Public Sub SetupDataSheet(Optional ByVal fromCode As Boolean = False)
         lo.Name = HISTORY_TABLE
     End If
     lo.TableStyle = "TableStyleMedium2"
+    ResetDataArea wsD
     ' Dzieñ salda pocz¹tkowego (dla importu z brokerów): pierwszy wpis historii portfela.
     If Not IsDate(wsD.Range("AB32").Value) And Not lo.DataBodyRange Is Nothing Then
         If IsDate(lo.ListRows(1).Range.Cells(1, 1).Value) Then

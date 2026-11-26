@@ -663,7 +663,7 @@ End Sub
 Public Sub EnsureColumns(ByVal lo As ListObject, ByVal headers As Variant)
     Dim h As Variant
     For Each h In headers
-        If Not ListColumnExists(lo, CStr(h)) Then lo.ListColumns.Add.Name = CStr(h)
+        If Not ListColumnExists(lo, CStr(h)) Then AddTableColumn lo, CStr(h)
     Next h
 End Sub
 
