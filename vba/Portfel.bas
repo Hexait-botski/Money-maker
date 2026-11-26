@@ -26,6 +26,11 @@ Public Const DASH_SHEET As String = "Dashboard"
 Public Const DATA_SHEET As String = "Dane"
 Public Const HISTORY_TABLE As String = "HistoriaPortfela"
 Public Const DIVIDEND_SHEET As String = "Dywidendy"
+Public Const DIV_HISTORY_TABLE As String = "DywidendyHistoria"
+Public Const POS_START_TABLE As String = "PoczatekPozycji"
+Public Const DIV_FORECAST_TABLE As String = "DywidendyPrognoza"
+Public Const DIV_AUTO_SOURCE As String = "automatycznie (szacunek)"
+Public Const DIV_MANUAL_SOURCE As String = "otrzymana"
 
 ' Kolory motywu (ciemny).
 Private Const C_BG As Long = 1182986        ' #0a0d12 t≥o
@@ -275,7 +280,11 @@ Public Function UpdatePortfolioQuotes(ByVal showMessage As Boolean) As Long
     Application.Calculate
     ws.Range("A3").Value = "Ostatnie pobranie Yahoo: " & Format$(Now, "dd.mm.yyyy hh:mm:ss") & _
                            " | kursy spÛ≥ek: " & okCount & "/" & totalSymbols
-    If okCount > 0 Then RecordPortfolioSnapshot
+    If okCount > 0 Then
+        SyncDividends False
+        Application.Calculate
+        RecordPortfolioSnapshot
+    End If
     RefreshDashboardVisuals
 
     Application.StatusBar = False
@@ -821,6 +830,9 @@ Public Sub InstallPortfolioTools()
     Application.Calculate
     BuildDashboard
     BuildDividendsSheet
+    Application.StatusBar = "Pobieranie dywidend z Yahoo..."
+    SyncDividends True
+    Application.StatusBar = False
     SetupButtons
 
     Application.Calculate
@@ -991,8 +1003,10 @@ Private Sub SetupButtons()
               ThisWorkbook.Worksheets(ANALYSIS_SHEET).Range("E4").Left, ThisWorkbook.Worksheets(ANALYSIS_SHEET).Range("B1").Top + 4, 150, "RefreshPortfolio"
     AddButton ThisWorkbook.Worksheets(ANALYSIS_SHEET), "btnAnalysisToDashboard", "DASHBOARD", _
               ThisWorkbook.Worksheets(ANALYSIS_SHEET).Range("E4").Left + 160, ThisWorkbook.Worksheets(ANALYSIS_SHEET).Range("B1").Top + 4, 110, "GoToDashboard", False
+    AddButton ThisWorkbook.Worksheets(DIVIDEND_SHEET), "btnSyncDividends", "POBIERZ DYWIDENDY", _
+              ThisWorkbook.Worksheets(DIVIDEND_SHEET).Range("E1").Left, ThisWorkbook.Worksheets(DIVIDEND_SHEET).Range("B1").Top + 4, 150, "SyncDividendsNow", True
     AddButton ThisWorkbook.Worksheets(DIVIDEND_SHEET), "btnDividendsToDashboard", "DASHBOARD", _
-              ThisWorkbook.Worksheets(DIVIDEND_SHEET).Range("E1").Left, ThisWorkbook.Worksheets(DIVIDEND_SHEET).Range("B1").Top + 4, 110, "GoToDashboard", False
+              ThisWorkbook.Worksheets(DIVIDEND_SHEET).Range("E1").Left + 160, ThisWorkbook.Worksheets(DIVIDEND_SHEET).Range("B1").Top + 4, 110, "GoToDashboard", False
     AddButton ledger, "btnAddTransaction", "DODAJ TRANSAKCJE", ledger.Range("O2").Left, ledger.Range("O2").Top, 175, "OpenTransactionEntry"
     AddButton entry, "btnSaveTransactions", "ZAPISZ TRANSAKCJE", entry.Range("C1").Left, entry.Range("A1").Top + 2, 175, "SaveNewTransactions"
     AddButton entry, "btnClearTransactions", "WYCZYå∆", entry.Range("C1").Left + 185, entry.Range("A1").Top + 2, 90, "ClearNewTransactions"
@@ -1410,10 +1424,12 @@ Private Sub SetupDataSheet()
         Array(21, "Dywidendy netto - ≥πcznie", "=IFERROR(SUM(INDEX(AP2#,0,5)),0)", "#,##0.00 ""z≥"""), _
         Array(22, "Dywidendy netto - bieøπcy rok", "=IFERROR(SUMPRODUCT((YEAR(INDEX(AP2#,0,1))=YEAR(TODAY()))*INDEX(AP2#,0,5)),0)", "#,##0.00 ""z≥"""), _
         Array(23, "Koszt pozycji wyp≥acajπcych", "=SUMIF(Pozycje!$C$5:$C$500,""Tak"",Pozycje!$F$5:$F$500)", "#,##0.00 ""z≥"""), _
-        Array(24, "Stopa od kosztu (12 mies.)", "=IFERROR(AB20/AB23,0)", "0.00%"), _
-        Array(25, "SpÛ≥ki wyp≥acajπce", "=COUNTIF(Pozycje!$C$5:$C$500,""Tak"")", "0"), _
-        Array(26, "Tekst dywidend", "=""≥πcznie ""&FIXED(AB21,2)&"" z≥""", "General"), _
-        Array(27, "Dywidendy - úrednio miesiÍcznie", "=AB20/12", "#,##0.00 ""z≥"""))
+        Array(24, "Stopa od kosztu (prognoza)", "=IFERROR(AB28/SUMIFS(" & DIV_FORECAST_TABLE & "[Koszt pozycji (PLN)]," & DIV_FORECAST_TABLE & "[Prognoza 12 mies. netto (PLN)],"">0""),0)", "0.00%"), _
+        Array(25, "SpÛ≥ki wyp≥acajπce", "=IFERROR(COUNTIF(" & DIV_FORECAST_TABLE & "[Prognoza 12 mies. netto (PLN)],"">0""),0)", "0"), _
+        Array(26, "Tekst dywidend", "=""otrzymane w 12 mies.: ""&FIXED(AB20,2)&"" z≥""", "General"), _
+        Array(27, "Dywidendy - úrednio miesiÍcznie", "=AB20/12", "#,##0.00 ""z≥"""), _
+        Array(28, "Prognoza dywidend 12 mies. (netto)", "=IFERROR(SUM(" & DIV_FORECAST_TABLE & "[Prognoza 12 mies. netto (PLN)]),0)", "#,##0.00 ""z≥"""), _
+        Array(29, "Stopa dywidendy portfela", "=IFERROR(AB28/(AB2-AB6),0)", "0.00%"))
     wsD.Range("AA1:AB1").Value = Array("Kluczowe liczby (Dashboard)", "WartoúÊ")
     For i = LBound(specs) To UBound(specs)
         wsD.Cells(specs(i)(0), "AA").Value = specs(i)(1)
@@ -1445,12 +1461,20 @@ Private Sub SetupDataSheet()
     wsD.Range("AI2:AI500").NumberFormat = "#,##0.00"
     wsD.Range("AJ2:AJ500").NumberFormat = "0.0%"
 
-    ' Dywidendy: lista wyp≥at z rejestru (data, spÛ≥ka, kwota, podatek, netto), najnowsze na gÛrze.
-    wsD.Range("AP1:AT1").Value = Array("Data", "SpÛ≥ka", "Kwota", "Podatek", "Netto")
+    ' Dywidendy: wyp≥aty z rejestru transakcji + tabela DywidendyHistoria (otrzymane i automatyczne).
+    ' Kolumny: data, spÛ≥ka, kwota, podatek, netto, ürÛd≥o - najnowsze na gÛrze.
+    SetupDividendTables wsD
+    wsD.Range("AP1:AU1").Value = Array("Data", "SpÛ≥ka", "Kwota", "Podatek", "Netto", "èrÛd≥o")
     wsD.Range("AP2").Formula2 = "=LET(daty,Transakcje!$A$30:$A$500,nazwy,Transakcje!$B$30:$B$500,typy,Transakcje!$C$30:$C$500," & _
         "kwoty,Transakcje!$E$30:$E$500,podatki,Transakcje!$F$30:$F$500,kontrola,Transakcje!$L$30:$L$500," & _
-        "maska,(typy=""Dywidenda"")*(kontrola=""OK"")*ISNUMBER(daty),podatkiN,IF(ISNUMBER(podatki),podatki,0)," & _
-        "IF(SUM(maska)=0,"""",SORTBY(FILTER(HSTACK(daty,nazwy,kwoty,podatkiN,kwoty-podatkiN),maska),FILTER(daty,maska),-1)))"
+        "maskaR,(typy=""Dywidenda"")*(kontrola=""OK"")*ISNUMBER(daty),podatkiN,IF(ISNUMBER(podatki),podatki,0)," & _
+        "tDaty,IFERROR(" & DIV_HISTORY_TABLE & "[Data],""""),tNazwy,IFERROR(" & DIV_HISTORY_TABLE & "[SpÛ≥ka],"""")," & _
+        "tKwoty,IFERROR(" & DIV_HISTORY_TABLE & "[Kwota netto (PLN)],0),tZrodla,IFERROR(" & DIV_HISTORY_TABLE & "[èrÛd≥o],"""")," & _
+        "maskaT,ISNUMBER(tDaty)*(tNazwy<>"""")," & _
+        "wszystkie,VSTACK(HSTACK(daty,nazwy,kwoty,podatkiN,kwoty-podatkiN,IF(ISNUMBER(daty)+1,""rejestr transakcji""))," & _
+        "HSTACK(tDaty,tNazwy,tKwoty,IF(ISNUMBER(tKwoty),0,0),tKwoty,tZrodla))," & _
+        "maska,VSTACK(maskaR,maskaT)," & _
+        "IF(SUM(maska)=0,"""",SORTBY(FILTER(wszystkie,maska),FILTER(INDEX(wszystkie,0,1),maska),-1)))"
     wsD.Range("AP2:AP2000").NumberFormat = "dd.mm.yyyy"
     wsD.Range("AR2:AT2000").NumberFormat = "#,##0.00"
     ' Dywidendy w ostatnich 24 miesiπcach (dla wykresu).
@@ -1711,8 +1735,8 @@ Public Sub BuildDashboard()
     ' 3) Kafelki z kluczowymi liczbami.
     y = 146
     cardW = (totalW - 5 * gap) / 6
-    kpiLabels = Array("WartoúÊ portfela", "Zysk / strata", "Stopa zwrotu", "Wp≥aty netto", "Wolne úrodki", "Dywidendy (12 mies.)")
-    kpiRefs = Array("$AB$2", "$AB$4", "$AB$5", "$AB$3", "$AB$6", "$AB$20")
+    kpiLabels = Array("WartoúÊ portfela", "Zysk / strata", "Stopa zwrotu", "Wp≥aty netto", "Wolne úrodki", "Dywidendy - prognoza 12 mies.")
+    kpiRefs = Array("$AB$2", "$AB$4", "$AB$5", "$AB$3", "$AB$6", "$AB$28")
     kpiSubs = Array("", "wartoúÊ minus wp≥aty netto", "zysk " & ChrW(247) & " wp≥aty netto", "wp≥aty minus wyp≥aty", "", "")
     For i = 0 To 5
         cardL = x0 + i * (cardW + gap)
@@ -2047,22 +2071,22 @@ Public Sub BuildDividendsSheet()
         .Range("B1").Font.Size = 20
         .Rows(1).RowHeight = 36
         .Range("B1").VerticalAlignment = xlCenter
-        .Range("B2").Value = "Kwoty netto (to, co wp≥ynÍ≥o na konto), z wpisÛw typu Dywidenda w arkuszu Transakcje. " & _
-                             "SpÛ≥ka trafia do tabeli, gdy jest oznaczona jako wyp≥acajπca albo gdy zapisano juø jej dywidendÍ."
+        .Range("B2").Value = "Kwoty netto w PLN. Liczone automatycznie raz dziennie z danych Yahoo (dywidenda na akcjÍ " & ChrW(215) & _
+                             " liczba akcji w dniu ustalenia prawa, po podatku u ürÛd≥a) - tylko do statystyk, gotÛwka siÍ nie zmienia."
         .Range("B2").Font.Color = C_MUTED
 
         ' Kafelki
-        labels = Array("Otrzymane ≥πcznie", "W tym roku", "Ostatnie 12 miesiÍcy", "årednio miesiÍcznie (12 mies.)", _
-                       "Stopa od kosztu (12 mies.)", "SpÛ≥ki wyp≥acajπce")
+        labels = Array("Prognoza na 12 mies. (netto)", "Stopa dywidendy portfela", "Stopa od kosztu", _
+                       "Otrzymane w 12 mies.", "Otrzymane w tym roku", "Otrzymane ≥πcznie")
         For i = 0 To 5
             .Cells(4, 2 + i).Value = labels(i)
         Next i
-        .Range("B5").Formula2 = "=" & DATA_SHEET & "!$AB$21"
-        .Range("C5").Formula2 = "=" & DATA_SHEET & "!$AB$22"
-        .Range("D5").Formula2 = "=" & DATA_SHEET & "!$AB$20"
-        .Range("E5").Formula2 = "=" & DATA_SHEET & "!$AB$27"
-        .Range("F5").Formula2 = "=" & DATA_SHEET & "!$AB$24"
-        .Range("G5").Formula2 = "=" & DATA_SHEET & "!$AB$25&"" z ""&" & DATA_SHEET & "!$AB$15"
+        .Range("B5").Formula2 = "=" & DATA_SHEET & "!$AB$28"
+        .Range("C5").Formula2 = "=" & DATA_SHEET & "!$AB$29"
+        .Range("D5").Formula2 = "=" & DATA_SHEET & "!$AB$24"
+        .Range("E5").Formula2 = "=" & DATA_SHEET & "!$AB$20"
+        .Range("F5").Formula2 = "=" & DATA_SHEET & "!$AB$22"
+        .Range("G5").Formula2 = "=" & DATA_SHEET & "!$AB$21"
         With .Range("B4:G4")
             .Font.Size = 9
             .Font.Color = C_MUTED
@@ -2077,10 +2101,10 @@ Public Sub BuildDividendsSheet()
             .HorizontalAlignment = xlLeft
         End With
         .Range("B5:G5").Font.Color = C_FG
-        .Range("B5:D5").Font.Color = C_OK
+        .Range("B5").Font.Color = C_OK
         .Rows(5).RowHeight = 30
-        .Range("B5:E5").NumberFormat = "#,##0.00 ""z≥"""
-        .Range("F5").NumberFormat = "0.00%"
+        .Range("B5,E5:G5").NumberFormat = "#,##0.00 ""z≥"""
+        .Range("C5:D5").NumberFormat = "0.00%"
     End With
 
     ' Wykres miesiÍczny (24 miesiπce).
@@ -2100,7 +2124,7 @@ Public Sub BuildDividendsSheet()
         .ChartType = xlColumnClustered
         .HasLegend = False
         .ChartGroups(1).GapWidth = 40
-        StyleChartDark co.Chart, "Dywidendy w ostatnich 24 miesiπcach (netto, PLN)"
+        StyleChartDark co.Chart, "Dywidendy otrzymane w ostatnich 24 miesiπcach (netto, PLN)"
         On Error Resume Next
         .Axes(xlValue).TickLabels.NumberFormat = "#,##0"
         On Error GoTo 0
@@ -2111,39 +2135,43 @@ Public Sub BuildDividendsSheet()
     ws.Cells(compRow - 1, "B").Value = "SpÛ≥ki"
     ws.Cells(compRow - 1, "B").Font.Size = 12
     ws.Cells(compRow - 1, "B").Font.Bold = True
-    ws.Range(ws.Cells(compRow, "B"), ws.Cells(compRow, "J")).Value = Array("SpÛ≥ka / ETF", "Dywidenda", "Otrzymane ≥πcznie", _
-        "W tym roku", "Ostatnie 12 mies.", "Ostatnia wyp≥ata", "Liczba wyp≥at", "Koszt pozycji", "Stopa od kosztu (12 mies.)")
+    ws.Range(ws.Cells(compRow, "B"), ws.Cells(compRow, "J")).Value = Array("SpÛ≥ka / ETF", "Dywidenda", "Prognoza 12 mies. (PLN)", _
+        "Stopa dywidendy", "Stopa od kosztu", "Otrzymane w 12 mies.", "Otrzymane ≥πcznie", "Ostatnia dywidenda (ex)", "Liczba wyp≥at")
     StyleTableHeader ws.Range(ws.Cells(compRow, "B"), ws.Cells(compRow, "J"))
     ws.Cells(compRow + 1, "B").Formula2 = "=LET(nazwy,Pozycje!$B$5:$B$500,statusy,Pozycje!$C$5:$C$500,koszty,Pozycje!$F$5:$F$500," & _
+        "fNazwy," & DIV_FORECAST_TABLE & "[SpÛ≥ka],fPrognozy," & DIV_FORECAST_TABLE & "[Prognoza 12 mies. netto (PLN)]," & _
+        "fStopy," & DIV_FORECAST_TABLE & "[Stopa dywidendy],fOstatnie," & DIV_FORECAST_TABLE & "[Ostatnia dywidenda]," & _
+        "prognoza,IFERROR(XLOOKUP(nazwy,fNazwy,fPrognozy,0),0),stopa,IFERROR(XLOOKUP(nazwy,fNazwy,fStopy,0),0)," & _
+        "ostEx,IFERROR(XLOOKUP(nazwy,fNazwy,fOstatnie,0),0),odKosztu,IFERROR(prognoza/koszty,0)," & _
         "dDaty,INDEX(" & DATA_SHEET & "!$AP$2#,0,1),dNazwy,INDEX(" & DATA_SHEET & "!$AP$2#,0,2),dNetto,INDEX(" & DATA_SHEET & "!$AP$2#,0,5)," & _
         "lacznie,IFERROR(SUMIFS(dNetto,dNazwy,nazwy),0)," & _
-        "biezacy,IFERROR(SUMIFS(dNetto,dNazwy,nazwy,dDaty,"">=""&DATE(YEAR(TODAY()),1,1)),0)," & _
         "ost12,IFERROR(SUMIFS(dNetto,dNazwy,nazwy,dDaty,"">""&EDATE(TODAY(),-12)),0)," & _
-        "ostatnia,IFERROR(MAXIFS(dDaty,dNazwy,nazwy),0),ilosc,IFERROR(COUNTIFS(dNazwy,nazwy),0)," & _
-        "stopy,IFERROR(ost12/koszty,0),opis,IF(statusy=""Tak"",""Wyp≥aca"",statusy)," & _
-        "maska,(nazwy<>"""")*(((statusy=""Tak"")+(lacznie>0))>0)," & _
+        "ilosc,IFERROR(COUNTIFS(dNazwy,nazwy),0),opis,IF(statusy=""Tak"",""Wyp≥aca"",statusy)," & _
+        "maska,(nazwy<>"""")*(((prognoza>0)+(lacznie>0)+(statusy=""Tak""))>0)," & _
         "IF(SUM(maska)=0,""Brak spÛ≥ek wyp≥acajπcych dywidendy""," & _
-        "SORTBY(FILTER(HSTACK(nazwy,opis,lacznie,biezacy,ost12,ostatnia,ilosc,koszty,stopy),maska),FILTER(lacznie,maska),-1,FILTER(koszty,maska),-1)))"
+        "SORTBY(FILTER(HSTACK(nazwy,opis,prognoza,stopa,odKosztu,ost12,lacznie,ostEx,ilosc),maska),FILTER(prognoza,maska),-1,FILTER(lacznie,maska),-1)))"
     StyleTableBody ws.Range(ws.Cells(compRow + 1, "B"), ws.Cells(compRow + n + 1, "J"))
     ws.Range(ws.Cells(compRow + 1, "B"), ws.Cells(compRow + n + 1, "C")).HorizontalAlignment = xlLeft
     ws.Range(ws.Cells(compRow + 1, "C"), ws.Cells(compRow + n + 1, "C")).Font.Color = C_MUTED
-    ws.Range(ws.Cells(compRow + 1, "D"), ws.Cells(compRow + n + 1, "F")).NumberFormat = "#,##0.00;-#,##0.00;""-"""
-    ws.Range(ws.Cells(compRow + 1, "G"), ws.Cells(compRow + n + 1, "G")).NumberFormat = "dd.mm.yyyy;;""-"""
-    ws.Range(ws.Cells(compRow + 1, "H"), ws.Cells(compRow + n + 1, "H")).NumberFormat = "0;;""-"""
-    ws.Range(ws.Cells(compRow + 1, "I"), ws.Cells(compRow + n + 1, "I")).NumberFormat = "#,##0.00"
-    ws.Range(ws.Cells(compRow + 1, "J"), ws.Cells(compRow + n + 1, "J")).NumberFormat = "0.00%;;""-"""
-    ws.Range(ws.Cells(compRow + 1, "D"), ws.Cells(compRow + n + 1, "F")).Font.Color = C_OK
+    ws.Range(ws.Cells(compRow + 1, "D"), ws.Cells(compRow + n + 1, "D")).NumberFormat = "#,##0.00;-#,##0.00;""-"""
+    ws.Range(ws.Cells(compRow + 1, "E"), ws.Cells(compRow + n + 1, "F")).NumberFormat = "0.00%;;""-"""
+    ws.Range(ws.Cells(compRow + 1, "G"), ws.Cells(compRow + n + 1, "H")).NumberFormat = "#,##0.00;-#,##0.00;""-"""
+    ws.Range(ws.Cells(compRow + 1, "I"), ws.Cells(compRow + n + 1, "I")).NumberFormat = "dd.mm.yyyy;;""-"""
+    ws.Range(ws.Cells(compRow + 1, "J"), ws.Cells(compRow + n + 1, "J")).NumberFormat = "0;;""-"""
+    ws.Range(ws.Cells(compRow + 1, "D"), ws.Cells(compRow + n + 1, "D")).Font.Color = C_OK
 
     ' Historia wyp≥at (najnowsze na gÛrze).
     histRow = compRow + n + 4
     ws.Cells(histRow - 1, "B").Value = "Historia wyp≥at"
     ws.Cells(histRow - 1, "B").Font.Size = 12
     ws.Cells(histRow - 1, "B").Font.Bold = True
-    ws.Range(ws.Cells(histRow, "B"), ws.Cells(histRow, "F")).Value = Array("Data", "SpÛ≥ka / ETF", "Kwota", "Podatek", "Netto")
-    StyleTableHeader ws.Range(ws.Cells(histRow, "B"), ws.Cells(histRow, "F"))
-    ws.Cells(histRow + 1, "B").Formula2 = "=IFERROR(IF(INDEX(" & DATA_SHEET & "!$AP$2#,1,1)="""",""Brak zapisanych dywidend - dodaj je w arkuszu Nowe transakcje (typ Dywidenda)."", " & _
+    ws.Range(ws.Cells(histRow, "B"), ws.Cells(histRow, "G")).Value = Array("Data", "SpÛ≥ka / ETF", "Kwota", "Podatek", "Netto", "èrÛd≥o")
+    StyleTableHeader ws.Range(ws.Cells(histRow, "B"), ws.Cells(histRow, "G"))
+    ws.Cells(histRow + 1, "B").Formula2 = "=IFERROR(IF(INDEX(" & DATA_SHEET & "!$AP$2#,1,1)="""",""Brak dywidend - pojawiπ siÍ po pierwszym pobraniu z Yahoo (przycisk POBIERZ DYWIDENDY)."", " & _
         DATA_SHEET & "!$AP$2#),""Brak zapisanych dywidend."")"
-    StyleTableBody ws.Range(ws.Cells(histRow + 1, "B"), ws.Cells(histRow + 200, "F"))
+    StyleTableBody ws.Range(ws.Cells(histRow + 1, "B"), ws.Cells(histRow + 200, "G"))
+    ws.Range(ws.Cells(histRow + 1, "G"), ws.Cells(histRow + 200, "G")).HorizontalAlignment = xlLeft
+    ws.Range(ws.Cells(histRow + 1, "G"), ws.Cells(histRow + 200, "G")).Font.Color = C_MUTED
     ws.Range(ws.Cells(histRow + 1, "B"), ws.Cells(histRow + 200, "C")).HorizontalAlignment = xlLeft
     ws.Range(ws.Cells(histRow + 1, "B"), ws.Cells(histRow + 200, "B")).NumberFormat = "dd.mm.yyyy"
     ws.Range(ws.Cells(histRow + 1, "D"), ws.Cells(histRow + 200, "F")).NumberFormat = "#,##0.00"
@@ -2232,3 +2260,385 @@ Private Sub StyleTableBody(ByVal rng As Range)
         .RowHeight = 20
     End With
 End Sub
+
+' ---------------------------------------------------------------------------
+' DYWIDENDY AUTOMATYCZNIE
+' Raz dziennie (przy aktualizacji kursÛw) makro pobiera z Yahoo dywidendy na
+' akcjÍ kaødego instrumentu, liczy ile jednostek by≥o w posiadaniu w dniu
+' ustalenia prawa (ex-date), przelicza na PLN i odejmuje podatek u ürÛd≥a.
+' Wyniki trafiajπ do tabeli DywidendyHistoria (ürÛd≥o "automatycznie") -
+' tylko do statystyk, gotÛwka siÍ nie zmienia. Wyp≥aty wpisane rÍcznie
+' (tabela i rejestr transakcji) majπ pierwszeÒstwo.
+' ---------------------------------------------------------------------------
+Public Sub SyncDividendsNow()
+    If SyncDividends(True) Then
+        MsgBox "Dywidendy zaktualizowane.", vbInformation, "Dywidendy"
+    Else
+        MsgBox "Nie uda≥o siÍ pobraÊ dywidend: " & YahooQuoteLastError, vbExclamation, "Dywidendy"
+    End If
+End Sub
+
+Public Function SyncDividends(ByVal force As Boolean) As Boolean
+    Dim wsQ As Worksheet, wsD As Worksheet, wsT As Worksheet, wsP As Worksheet
+    Dim loH As ListObject, loS As ListObject, loF As ListObject
+    Dim ledger As Variant, initRows As Variant
+    Dim r As Long, lastQ As Long, k As Long, i As Long, posRow As Long
+    Dim sym As String, nm As String, cur As String
+    Dim amounts() As Double, exDates() As Date, cnt As Long
+    Dim fx As Double, w As Double, units As Double
+    Dim threshold As Date, trackStart As Date
+    Dim dps12 As Double, lastEx As Date, priceCur As Double, unitsNow As Double, costNow As Double
+    Dim autoRows As Collection, fRows As Collection
+    Dim item As Variant, okAny As Boolean
+    Dim lastSync As Variant
+
+    On Error GoTo Failed
+    Set wsD = ThisWorkbook.Worksheets(DATA_SHEET)
+    Set wsQ = ThisWorkbook.Worksheets("Notowania")
+    Set wsT = ThisWorkbook.Worksheets("Transakcje")
+    Set wsP = ThisWorkbook.Worksheets("Pozycje")
+    Set loH = FindTable(DIV_HISTORY_TABLE)
+    Set loS = FindTable(POS_START_TABLE)
+    Set loF = FindTable(DIV_FORECAST_TABLE)
+    If loH Is Nothing Or loF Is Nothing Then Exit Function
+
+    lastSync = wsD.Range("AB30").Value
+    If Not force And IsDate(lastSync) Then
+        If Int(CDbl(CDate(lastSync))) = CLng(Date) Then
+            SyncDividends = True
+            Exit Function
+        End If
+    End If
+    If IsDate(wsD.Range("AB31").Value) Then
+        trackStart = CDate(wsD.Range("AB31").Value)
+    Else
+        trackStart = Date
+        wsD.Range("AB31").Value = Date
+    End If
+
+    ledger = wsT.Range("A30:L500").Value
+    initRows = wsT.Range("B7:D29").Value
+    Set autoRows = New Collection
+    Set fRows = New Collection
+
+    lastQ = wsQ.Cells(wsQ.Rows.Count, "S").End(xlUp).Row
+    For r = 7 To lastQ
+        sym = Trim$(CStr(wsQ.Cells(r, "S").Value))
+        nm = Trim$(CStr(wsQ.Cells(r, "A").Value))
+        If Len(sym) > 0 And Len(nm) > 0 Then
+            Application.StatusBar = "Pobieranie dywidend: " & sym
+            If GetYahooDividends(sym, amounts, exDates, cnt, cur) Then
+                okAny = True
+                fx = Val(CStr(wsQ.Cells(r, "G").Value))
+                If fx <= 0 Then fx = 1
+                w = WithholdingRate(CStr(wsQ.Cells(r, "F").Value))
+
+                ' Od kiedy liczyÊ: pÛüniejsza z dat - poczπtek posiadania / ostatnia wpisana wyp≥ata.
+                threshold = StartDateFor(loS, nm, trackStart)
+                If LastManualDividend(loH, ledger, nm) > threshold Then threshold = LastManualDividend(loH, ledger, nm)
+
+                dps12 = 0
+                lastEx = 0
+                For k = 1 To cnt
+                    If exDates(k) > Date - 365 And exDates(k) <= Date Then dps12 = dps12 + amounts(k)
+                    If exDates(k) <= Date And exDates(k) > lastEx Then lastEx = exDates(k)
+                    If exDates(k) > threshold And exDates(k) <= Date Then
+                        units = UnitsHeldAt(nm, exDates(k), initRows, ledger, StartDateFor(loS, nm, trackStart))
+                        If units > 0 Then
+                            autoRows.Add Array(exDates(k), nm, Round(amounts(k) * units * fx * (1 - w), 2), DIV_AUTO_SOURCE)
+                        End If
+                    End If
+                Next k
+
+                posRow = FindPositionRow(wsP, nm)
+                unitsNow = 0
+                costNow = 0
+                If posRow > 0 Then
+                    unitsNow = Val(CStr(wsP.Cells(posRow, "D").Value))
+                    costNow = Val(CStr(wsP.Cells(posRow, "F").Value))
+                    If dps12 > 0 Then
+                        If Len(Trim$(CStr(wsP.Cells(posRow, "C").Value))) = 0 Or CStr(wsP.Cells(posRow, "C").Value) = "Nieustalone" Then
+                            wsP.Cells(posRow, "C").Value = "Tak"
+                        End If
+                    End If
+                End If
+                priceCur = 0
+                If IsNumeric(wsQ.Cells(r, "E").Value) And Not IsEmpty(wsQ.Cells(r, "E").Value) Then
+                    priceCur = CDbl(wsQ.Cells(r, "E").Value) / fx
+                End If
+                fRows.Add Array(nm, dps12, cur, unitsNow, Round(dps12 * unitsNow * fx * (1 - w), 2), _
+                                IIf(priceCur > 0, dps12 / priceCur, 0), costNow, IIf(lastEx > 0, lastEx, Empty))
+            End If
+            Sleep 150
+        End If
+    Next r
+    Application.StatusBar = False
+    If Not okAny Then Exit Function
+
+    ' Zastπp wczeúniejsze wyliczenia automatyczne.
+    For i = loH.ListRows.Count To 1 Step -1
+        If CStr(loH.ListRows(i).Range.Cells(1, 4).Value) = DIV_AUTO_SOURCE Or _
+           Len(Trim$(CStr(loH.ListRows(i).Range.Cells(1, 2).Value))) = 0 Then loH.ListRows(i).Delete
+    Next i
+    For Each item In autoRows
+        loH.ListRows.Add.Range.Value = item
+    Next item
+    If Not loH.DataBodyRange Is Nothing Then
+        loH.ListColumns(1).DataBodyRange.NumberFormat = "dd.mm.yyyy"
+        loH.ListColumns(3).DataBodyRange.NumberFormat = "#,##0.00"
+        With loH.Sort
+            .SortFields.Clear
+            .SortFields.Add Key:=loH.ListColumns(1).DataBodyRange, Order:=xlDescending
+            .Header = xlYes
+            .Apply
+        End With
+    End If
+
+    If Not loF.DataBodyRange Is Nothing Then loF.DataBodyRange.Delete
+    For Each item In fRows
+        loF.ListRows.Add.Range.Value = item
+    Next item
+    If Not loF.DataBodyRange Is Nothing Then
+        loF.ListColumns(2).DataBodyRange.NumberFormat = "0.0000"
+        loF.ListColumns(5).DataBodyRange.NumberFormat = "#,##0.00"
+        loF.ListColumns(6).DataBodyRange.NumberFormat = "0.00%"
+        loF.ListColumns(7).DataBodyRange.NumberFormat = "#,##0.00"
+        loF.ListColumns(8).DataBodyRange.NumberFormat = "dd.mm.yyyy"
+    End If
+
+    wsD.Range("AB30").Value = Now
+    wsD.Range("AB30").NumberFormat = "dd.mm.yyyy hh:mm"
+    SyncDividends = True
+    Exit Function
+
+Failed:
+    Application.StatusBar = False
+    If Len(YahooQuoteLastError) = 0 Then YahooQuoteLastError = Err.Description
+    SyncDividends = False
+End Function
+
+' Dywidendy na akcjÍ z Yahoo (ostatnie 5 lat). Kwoty w walucie notowania,
+' pensy przeliczone na funty.
+Public Function GetYahooDividends(ByVal symbol As String, ByRef amounts() As Double, ByRef exDates() As Date, _
+                                  ByRef cnt As Long, ByRef quoteCurrency As String) As Boolean
+    Dim http As Object, re As Object, ms As Object
+    Dim body As String
+    Dim k As Long
+    Dim divisor As Double
+
+    cnt = 0
+    ReDim amounts(1 To 1)
+    ReDim exDates(1 To 1)
+    On Error GoTo Fail
+    Set http = CreateObject("WinHttp.WinHttpRequest.5.1")
+    http.Open "GET", YAHOO_QUOTE_ROOT & Replace(symbol, "=", "%3D") & "?range=5y&interval=1mo&events=div", False
+    http.SetRequestHeader "User-Agent", "Mozilla/5.0"
+    http.SetRequestHeader "Accept", "application/json"
+    http.SetTimeouts 5000, 5000, 10000, 10000
+    http.Send
+    If http.Status <> 200 Then
+        YahooQuoteLastError = "HTTP " & CStr(http.Status) & " dla " & symbol
+        Exit Function
+    End If
+    body = CStr(http.ResponseText)
+    quoteCurrency = YahooQuoteJsonString(body, "currency")
+    divisor = 1
+    If quoteCurrency = "GBp" Or quoteCurrency = "GBX" Or quoteCurrency = "GBPX" Then
+        divisor = 100
+        quoteCurrency = "GBP"
+    End If
+
+    Set re = CreateObject("VBScript.RegExp")
+    re.Global = True
+    re.Pattern = """amount""\s*:\s*([0-9.eE+-]+)\s*,\s*""date""\s*:\s*([0-9]+)"
+    Set ms = re.Execute(body)
+    If ms.Count > 0 Then
+        ReDim amounts(1 To ms.Count)
+        ReDim exDates(1 To ms.Count)
+        For k = 0 To ms.Count - 1
+            cnt = cnt + 1
+            amounts(cnt) = Val(ms(k).SubMatches(0)) / divisor
+            exDates(cnt) = Int(DateAdd("s", CDbl(ms(k).SubMatches(1)), DateSerial(1970, 1, 1)))
+        Next k
+    End If
+    GetYahooDividends = True
+    Exit Function
+Fail:
+    YahooQuoteLastError = "B≥πd pobierania dywidend " & symbol & ": " & Err.Description
+    GetYahooDividends = False
+End Function
+
+Private Function FindTable(ByVal tableName As String) As ListObject
+    Dim ws As Worksheet
+    Dim lo As ListObject
+    For Each ws In ThisWorkbook.Worksheets
+        For Each lo In ws.ListObjects
+            If lo.Name = tableName Then
+                Set FindTable = lo
+                Exit Function
+            End If
+        Next lo
+    Next ws
+End Function
+
+Private Function FindPositionRow(ByVal wsP As Worksheet, ByVal nm As String) As Long
+    Dim r As Long, lastRow As Long
+    lastRow = wsP.Cells(wsP.Rows.Count, "B").End(xlUp).Row
+    For r = 5 To lastRow
+        If StrComp(Trim$(CStr(wsP.Cells(r, "B").Value)), nm, vbTextCompare) = 0 Then
+            FindPositionRow = r
+            Exit Function
+        End If
+    Next r
+End Function
+
+' Stawka podatku pobieranego u ürÛd≥a - z tabeli za≥oøeÒ w arkuszu Dywidendy.
+Private Function WithholdingRate(ByVal currencyCode As String) As Double
+    Dim ws As Worksheet
+    Dim i As Long
+    currencyCode = UCase$(Trim$(currencyCode))
+    Select Case currencyCode
+        Case "PLN": WithholdingRate = 0.19
+        Case "USD": WithholdingRate = 0.15
+        Case Else: WithholdingRate = 0
+    End Select
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(DIVIDEND_SHEET)
+    On Error GoTo 0
+    If ws Is Nothing Then Exit Function
+    For i = 15 To 18
+        If UCase$(Trim$(CStr(ws.Cells(i, "L").Value))) = currencyCode And IsNumeric(ws.Cells(i, "M").Value) _
+           And Not IsEmpty(ws.Cells(i, "M").Value) Then
+            WithholdingRate = CDbl(ws.Cells(i, "M").Value)
+        End If
+    Next i
+End Function
+
+' Poczπtek posiadania pozycji z salda poczπtkowego (tabela PoczatekPozycji).
+' Brak daty = liczone dopiero od rozpoczÍcia úledzenia dywidend.
+Private Function StartDateFor(ByVal loS As ListObject, ByVal nm As String, ByVal fallback As Date) As Date
+    Dim lr As ListRow
+    StartDateFor = fallback
+    If loS Is Nothing Then Exit Function
+    For Each lr In loS.ListRows
+        If StrComp(Trim$(CStr(lr.Range.Cells(1, 1).Value)), nm, vbTextCompare) = 0 Then
+            If IsDate(lr.Range.Cells(1, 2).Value) Then StartDateFor = CDate(lr.Range.Cells(1, 2).Value)
+            Exit Function
+        End If
+    Next lr
+End Function
+
+' Data ostatniej dywidendy wpisanej rÍcznie (tabela lub rejestr transakcji).
+Private Function LastManualDividend(ByVal loH As ListObject, ByVal ledger As Variant, ByVal nm As String) As Date
+    Dim lr As ListRow
+    Dim i As Long
+    For Each lr In loH.ListRows
+        If CStr(lr.Range.Cells(1, 4).Value) <> DIV_AUTO_SOURCE And _
+           StrComp(Trim$(CStr(lr.Range.Cells(1, 2).Value)), nm, vbTextCompare) = 0 And IsDate(lr.Range.Cells(1, 1).Value) Then
+            If CDate(lr.Range.Cells(1, 1).Value) > LastManualDividend Then LastManualDividend = CDate(lr.Range.Cells(1, 1).Value)
+        End If
+    Next lr
+    For i = 1 To UBound(ledger, 1)
+        If CStr(ledger(i, 3)) = OP_DIVIDEND And StrComp(Trim$(CStr(ledger(i, 2))), nm, vbTextCompare) = 0 And IsDate(ledger(i, 1)) Then
+            If CDate(ledger(i, 1)) > LastManualDividend Then LastManualDividend = CDate(ledger(i, 1))
+        End If
+    Next i
+End Function
+
+' Liczba jednostek w posiadaniu w dniu ex-date (przed tym dniem).
+Private Function UnitsHeldAt(ByVal nm As String, ByVal exDate As Date, ByVal initRows As Variant, _
+                             ByVal ledger As Variant, ByVal startDate As Date) As Double
+    Dim i As Long
+    Dim u As Double
+    If exDate > startDate Then
+        For i = 1 To UBound(initRows, 1)
+            If StrComp(Trim$(CStr(initRows(i, 1))), nm, vbTextCompare) = 0 And IsNumeric(initRows(i, 3)) Then
+                u = u + CDbl(initRows(i, 3))
+            End If
+        Next i
+    End If
+    For i = 1 To UBound(ledger, 1)
+        If StrComp(Trim$(CStr(ledger(i, 2))), nm, vbTextCompare) = 0 And IsDate(ledger(i, 1)) And CStr(ledger(i, 12)) = "OK" Then
+            If CDate(ledger(i, 1)) < exDate And IsNumeric(ledger(i, 4)) And Not IsEmpty(ledger(i, 4)) Then
+                If CStr(ledger(i, 3)) = OP_BUY Then u = u + CDbl(ledger(i, 4))
+                If CStr(ledger(i, 3)) = OP_SELL Then u = u - CDbl(ledger(i, 4))
+            End If
+        End If
+    Next i
+    UnitsHeldAt = u
+End Function
+
+' Tabela w arkuszu Dane (tworzona, gdy jej nie ma).
+Private Function EnsureTable(ByVal wsD As Worksheet, ByVal tableName As String, ByVal anchor As String, ByVal headers As Variant) As ListObject
+    Dim lo As ListObject
+    Dim n As Long
+    Set lo = FindTable(tableName)
+    If lo Is Nothing Then
+        n = UBound(headers) - LBound(headers) + 1
+        wsD.Range(anchor).Resize(1, n).Value = headers
+        Set lo = wsD.ListObjects.Add(xlSrcRange, wsD.Range(anchor).Resize(2, n), , xlYes)
+        lo.Name = tableName
+        lo.TableStyle = "TableStyleLight1"
+        If lo.ListRows.Count = 1 Then
+            If Len(Trim$(CStr(lo.ListRows(1).Range.Cells(1, 1).Value))) = 0 Then lo.ListRows(1).Delete
+        End If
+    End If
+    Set EnsureTable = lo
+End Function
+
+' Tabele dywidend + dane startowe (wyp≥aty przys≥ane przez uøytkownika i daty
+' poczπtku pozycji z salda poczπtkowego).
+Private Sub SetupDividendTables(ByVal wsD As Worksheet)
+    Dim loH As ListObject, loS As ListObject
+    Dim seed As Variant, item As Variant
+    Dim hasManual As Boolean
+    Dim lr As ListRow
+    Dim initNames As Variant
+    Dim i As Long, found As Boolean
+
+    Set loH = EnsureTable(wsD, DIV_HISTORY_TABLE, "BA1", Array("Data", "SpÛ≥ka", "Kwota netto (PLN)", "èrÛd≥o"))
+    Set loS = EnsureTable(wsD, POS_START_TABLE, "BF1", Array("SpÛ≥ka", "Posiadane od"))
+    EnsureTable wsD, DIV_FORECAST_TABLE, "BI1", Array("SpÛ≥ka", "Dywidenda na akcjÍ 12 mies.", "Waluta", "Liczba jednostek", _
+                "Prognoza 12 mies. netto (PLN)", "Stopa dywidendy", "Koszt pozycji (PLN)", "Ostatnia dywidenda")
+
+    ' Wyp≥aty otrzymane (wpisywane raz, przy pierwszej instalacji).
+    For Each lr In loH.ListRows
+        If CStr(lr.Range.Cells(1, 4).Value) = DIV_MANUAL_SOURCE Then hasManual = True
+    Next lr
+    If Not hasManual Then
+        seed = ReceivedDividendsSeed()
+        If IsArray(seed) Then
+            For Each item In seed
+                loH.ListRows.Add.Range.Value = Array(item(0), item(1), item(2), DIV_MANUAL_SOURCE)
+            Next item
+        End If
+    End If
+
+    ' Daty poczπtku dla pozycji z salda poczπtkowego.
+    initNames = ThisWorkbook.Worksheets("Transakcje").Range("B7:B29").Value
+    For i = 1 To UBound(initNames, 1)
+        If Len(Trim$(CStr(initNames(i, 1)))) > 0 Then
+            found = False
+            For Each lr In loS.ListRows
+                If StrComp(CStr(lr.Range.Cells(1, 1).Value), CStr(initNames(i, 1)), vbTextCompare) = 0 Then found = True
+            Next lr
+            If Not found Then loS.ListRows.Add.Range.Value = Array(CStr(initNames(i, 1)), PositionStartSeed(CStr(initNames(i, 1))))
+        End If
+    Next i
+    If Not loS.DataBodyRange Is Nothing Then loS.ListColumns(2).DataBodyRange.NumberFormat = "dd.mm.yyyy"
+    If Not IsDate(wsD.Range("AB31").Value) Then wsD.Range("AB31").Value = Date
+    wsD.Range("AB31").NumberFormat = "dd.mm.yyyy"
+    wsD.Range("AA30").Value = "Ostatnie pobranie dywidend"
+    wsD.Range("AA31").Value = "Poczπtek automatycznego liczenia dywidend"
+End Sub
+
+' Dywidendy otrzymane przed automatem: Array(data, spÛ≥ka, kwota netto PLN).
+' Uzupe≥niane danymi od uøytkownika.
+Private Function ReceivedDividendsSeed() As Variant
+    ReceivedDividendsSeed = Empty
+End Function
+
+' Data zakupu pozycji z salda poczπtkowego (pusta = nieznana).
+Private Function PositionStartSeed(ByVal nm As String) As Variant
+    PositionStartSeed = Empty
+End Function

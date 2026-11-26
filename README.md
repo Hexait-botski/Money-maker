@@ -77,9 +77,17 @@ Arkusz **Nowe transakcje**, jeden wiersz = jedna operacja, potem **ZAPISZ TRANSA
 
 ## Dywidendy i podatek Belki
 
-- Dywidendy pochodzą z wpisów typu **Dywidenda** w arkuszu Transakcje. Kwota wpisana w „Nowe transakcje”
-  to kwota netto (to, co wpłynęło na konto).
-- **Stopa od kosztu** = dywidendy netto z 12 miesięcy ÷ koszt zakupu spółek wypłacających.
+- **Automatycznie**: raz dziennie (przy aktualizacji kursów) makro pobiera z Yahoo dywidendy na akcję
+  z ostatnich 5 lat i liczy: dywidenda na akcję × liczba jednostek w dniu ustalenia prawa (ex-date) × kurs waluty,
+  minus podatek u źródła. Wyniki trafiają do tabeli `DywidendyHistoria` (arkusz Dane) ze źródłem
+  „automatycznie (szacunek)”. To tylko statystyki: gotówka się nie zmienia.
+- **Wypłaty otrzymane** (wpisane przez użytkownika albo typ Dywidenda w rejestrze) mają pierwszeństwo:
+  automat liczy tylko dywidendy z ex-date po ostatniej wpisanej wypłacie danej spółki.
+- **Pozycje z salda początkowego** nie mają daty zakupu; tabela `PoczatekPozycji` (arkusz Dane) mówi,
+  od kiedy je liczyć. Bez daty automat liczy dopiero od dnia instalacji.
+- **Prognoza na 12 miesięcy** = dywidendy na akcję z ostatnich 12 miesięcy × obecna liczba jednostek, netto.
+  Z niej liczone są stopa dywidendy portfela i stopa od kosztu.
+- Kursy walut do przeliczenia dywidend są bieżące (szacunek).
 - **Podatek Belki (szacunek, dodatek)**: 19% od zrealizowanego wyniku ze sprzedaży w wybranym roku oraz dopłata
   do dywidend zagranicznych. Kwotę brutto i podatek pobrany u źródła wylicza się ze stawek w tabeli założeń
   (domyślnie PLN 19%, USD 15%, GBP 0%, EUR 0%; można je zmienić). Urząd liczy koszt metodą FIFO i po kursach NBP,
