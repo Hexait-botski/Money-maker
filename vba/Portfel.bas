@@ -27,10 +27,12 @@ Public Const DATA_SHEET As String = "Dane"
 Public Const HISTORY_TABLE As String = "HistoriaPortfela"
 Public Const DIVIDEND_SHEET As String = "Dywidendy"
 Public Const DIV_HISTORY_TABLE As String = "DywidendyHistoria"
-Public Const POS_START_TABLE As String = "PoczatekPozycji"
+Public Const START_PANEL_ROW As Long = 30
 Public Const DIV_FORECAST_TABLE As String = "DywidendyPrognoza"
 Public Const DIV_AUTO_SOURCE As String = "automatycznie (szacunek)"
 Public Const DIV_MANUAL_SOURCE As String = "otrzymana"
+Public Const DIV_T212_SOURCE As String = "Trading 212"
+Public Const REALIZED_TABLE As String = "WynikiSprzedazy"
 
 ' Kolory motywu (ciemny).
 Private Const C_BG As Long = 1182986        ' #0a0d12 t≥o
@@ -844,7 +846,8 @@ Public Sub InstallPortfolioTools()
            "- poprawka cen z Londynu podawanych w pensach," & vbCrLf & _
            "- historia portfela zapisywana przy kaødej aktualizacji kursÛw," & vbCrLf & _
            "- arkusz ""Analiza"": stopa zwrotu skorygowana o wp≥aty i porÛwnanie z benchmarkiem," & vbCrLf & _
-           "- arkusz ""Dywidendy"" z szacunkiem podatku Belki." & vbCrLf & vbCrLf & _
+           "- arkusz ""Dywidendy"" z szacunkiem podatku Belki," & vbCrLf & _
+           "- import historii z Trading 212 (przycisk IMPORTUJ Z TRADING 212)." & vbCrLf & vbCrLf & _
            "Zapisz plik (Ctrl+S).", vbInformation, "Portfel inwestycyjny"
     Exit Sub
 
@@ -1007,6 +1010,8 @@ Private Sub SetupButtons()
               ThisWorkbook.Worksheets(DIVIDEND_SHEET).Range("E1").Left, ThisWorkbook.Worksheets(DIVIDEND_SHEET).Range("B1").Top + 4, 150, "SyncDividendsNow", True
     AddButton ThisWorkbook.Worksheets(DIVIDEND_SHEET), "btnDividendsToDashboard", "DASHBOARD", _
               ThisWorkbook.Worksheets(DIVIDEND_SHEET).Range("E1").Left + 160, ThisWorkbook.Worksheets(DIVIDEND_SHEET).Range("B1").Top + 4, 110, "GoToDashboard", False
+    AddButton ThisWorkbook.Worksheets(DIVIDEND_SHEET), "btnImportT212Div", "IMPORTUJ Z TRADING 212", _
+              ThisWorkbook.Worksheets(DIVIDEND_SHEET).Range("E1").Left + 280, ThisWorkbook.Worksheets(DIVIDEND_SHEET).Range("B1").Top + 4, 170, "ImportTrading212", False
     AddButton ledger, "btnAddTransaction", "DODAJ TRANSAKCJE", ledger.Range("O2").Left, ledger.Range("O2").Top, 175, "OpenTransactionEntry"
     AddButton entry, "btnSaveTransactions", "ZAPISZ TRANSAKCJE", entry.Range("C1").Left, entry.Range("A1").Top + 2, 175, "SaveNewTransactions"
     AddButton entry, "btnClearTransactions", "WYCZYå∆", entry.Range("C1").Left + 185, entry.Range("A1").Top + 2, 90, "ClearNewTransactions"
@@ -1067,6 +1072,7 @@ Private Sub SetupAnalysisSheet()
     Dim ws As Worksheet
     Dim lo As ListObject
     Dim labels As Variant
+    Dim keepStarts As Object
     Dim i As Long
 
     On Error Resume Next
@@ -1470,9 +1476,10 @@ Private Sub SetupDataSheet()
         "maskaR,(typy=""Dywidenda"")*(kontrola=""OK"")*ISNUMBER(daty),podatkiN,IF(ISNUMBER(podatki),podatki,0)," & _
         "tDaty,IFERROR(" & DIV_HISTORY_TABLE & "[Data],""""),tNazwy,IFERROR(" & DIV_HISTORY_TABLE & "[SpÛ≥ka],"""")," & _
         "tKwoty,IFERROR(" & DIV_HISTORY_TABLE & "[Kwota netto (PLN)],0),tZrodla,IFERROR(" & DIV_HISTORY_TABLE & "[èrÛd≥o],"""")," & _
+        "tPodatki,IFERROR(" & DIV_HISTORY_TABLE & "[Podatek u ürÛd≥a (PLN)],0),tPodN,IF(ISNUMBER(tPodatki),tPodatki,0)," & _
         "maskaT,ISNUMBER(tDaty)*(tNazwy<>"""")," & _
         "wszystkie,VSTACK(HSTACK(daty,nazwy,kwoty,podatkiN,kwoty-podatkiN,IF(ISNUMBER(daty)+1,""rejestr transakcji""))," & _
-        "HSTACK(tDaty,tNazwy,tKwoty,IF(ISNUMBER(tKwoty),0,0),tKwoty,tZrodla))," & _
+        "HSTACK(tDaty,tNazwy,tKwoty+tPodN,tPodN,tKwoty,tZrodla))," & _
         "maska,VSTACK(maskaR,maskaT)," & _
         "IF(SUM(maska)=0,"""",SORTBY(FILTER(wszystkie,maska),FILTER(INDEX(wszystkie,0,1),maska),-1)))"
     wsD.Range("AP2:AP2000").NumberFormat = "dd.mm.yyyy"
@@ -1731,6 +1738,7 @@ Public Sub BuildDashboard()
     AddButton ws, "btnOpenEntryDashboard", "DODAJ TRANSAKCJE", x0 + 160, 102, 150, "OpenTransactionEntry", False
     AddButton ws, "btnOpenAnalysis", "ANALIZA", x0 + 320, 102, 110, "GoToAnalysis", False
     AddButton ws, "btnOpenDividends", "DYWIDENDY", x0 + 440, 102, 110, "GoToDividends", False
+    AddButton ws, "btnImportT212", "IMPORTUJ Z TRADING 212", x0 + 560, 102, 170, "ImportTrading212", False
 
     ' 3) Kafelki z kluczowymi liczbami.
     y = 146
@@ -2042,6 +2050,7 @@ Public Sub BuildDividendsSheet()
         For i = 0 To 3
             If IsNumeric(ws.Cells(15 + i, "M").Value) And Not IsEmpty(ws.Cells(15 + i, "M").Value) Then keepRates(i) = ws.Cells(15 + i, "M").Value
         Next i
+        Set keepStarts = ReadStartPanel(ws)
         Do While ws.ChartObjects.Count > 0
             ws.ChartObjects(1).Delete
         Loop
@@ -2052,8 +2061,10 @@ Public Sub BuildDividendsSheet()
         ws.Cells.Validation.Delete
         ws.Cells.FormatConditions.Delete
         On Error GoTo 0
+        ws.Cells.UnMerge
         ws.Cells.Clear
     End If
+    If keepStarts Is Nothing Then Set keepStarts = CreateObject("Scripting.Dictionary")
 
     ThemeSheet ws
     ShowSheetLikeApp ws, True
@@ -2165,7 +2176,7 @@ Public Sub BuildDividendsSheet()
     ws.Cells(histRow - 1, "B").Value = "Historia wyp≥at"
     ws.Cells(histRow - 1, "B").Font.Size = 12
     ws.Cells(histRow - 1, "B").Font.Bold = True
-    ws.Range(ws.Cells(histRow, "B"), ws.Cells(histRow, "G")).Value = Array("Data", "SpÛ≥ka / ETF", "Kwota", "Podatek", "Netto", "èrÛd≥o")
+    ws.Range(ws.Cells(histRow, "B"), ws.Cells(histRow, "G")).Value = Array("Data", "SpÛ≥ka / ETF", "Brutto", "Podatek u ürÛd≥a", "Netto", "èrÛd≥o")
     StyleTableHeader ws.Range(ws.Cells(histRow, "B"), ws.Cells(histRow, "G"))
     ws.Cells(histRow + 1, "B").Formula2 = "=IFERROR(IF(INDEX(" & DATA_SHEET & "!$AP$2#,1,1)="""",""Brak dywidend - pojawiπ siÍ po pierwszym pobraniu z Yahoo (przycisk POBIERZ DYWIDENDY)."", " & _
         DATA_SHEET & "!$AP$2#),""Brak zapisanych dywidend."")"
@@ -2177,6 +2188,70 @@ Public Sub BuildDividendsSheet()
     ws.Range(ws.Cells(histRow + 1, "D"), ws.Cells(histRow + 200, "F")).NumberFormat = "#,##0.00"
 
     BuildBelkaPanel ws, keepYear, keepRates
+    BuildStartPanel ws, keepStarts
+End Sub
+
+Private Function ReadStartPanel(ByVal ws As Worksheet) As Object
+    Dim d As Object
+    Dim r As Long
+    Set d = CreateObject("Scripting.Dictionary")
+    d.CompareMode = vbTextCompare
+    For r = START_PANEL_ROW + 1 To START_PANEL_ROW + 60
+        If Len(Trim$(CStr(ws.Cells(r, "L").Value))) = 0 Then Exit For
+        If IsDate(ws.Cells(r, "M").Value) Then d(Trim$(CStr(ws.Cells(r, "L").Value))) = CDate(ws.Cells(r, "M").Value)
+    Next r
+    Set ReadStartPanel = d
+End Function
+
+' Panel "od kiedy masz akcje": pozycje z salda poczπtkowego, dla ktÛrych nie ma
+' jeszcze øadnej zapisanej dywidendy (np. spoza Trading 212). Na tej podstawie
+' automat liczy dywidendy wstecz.
+Private Sub BuildStartPanel(ByVal ws As Worksheet, ByVal keepStarts As Object)
+    Dim initNames As Variant
+    Dim loH As ListObject
+    Dim lr As ListRow
+    Dim haveDiv As Object
+    Dim i As Long, r As Long
+    Dim nm As String
+
+    Set haveDiv = CreateObject("Scripting.Dictionary")
+    haveDiv.CompareMode = vbTextCompare
+    Set loH = FindTable(DIV_HISTORY_TABLE)
+    If Not loH Is Nothing Then
+        For Each lr In loH.ListRows
+            If CStr(lr.Range.Cells(1, 4).Value) <> DIV_AUTO_SOURCE Then haveDiv(Trim$(CStr(lr.Range.Cells(1, 2).Value))) = True
+        Next lr
+    End If
+
+    With ws
+        .Range("L" & START_PANEL_ROW - 1).Value = "Od kiedy masz akcje (dla automatu dywidend)"
+        .Range("L" & START_PANEL_ROW - 1).Font.Bold = True
+        .Range("L" & START_PANEL_ROW).Value = "SpÛ≥ka / data zakupu (pierwszego)"
+        .Range("L" & START_PANEL_ROW).Font.Color = C_MUTED
+    End With
+    initNames = ThisWorkbook.Worksheets("Transakcje").Range("B7:B29").Value
+    r = START_PANEL_ROW
+    For i = 1 To UBound(initNames, 1)
+        nm = Trim$(CStr(initNames(i, 1)))
+        If Len(nm) > 0 And Not haveDiv.Exists(nm) Then
+            r = r + 1
+            ws.Cells(r, "L").Value = nm
+            If keepStarts.Exists(nm) Then ws.Cells(r, "M").Value = keepStarts(nm)
+        End If
+    Next i
+    If r > START_PANEL_ROW Then
+        With ws.Range(ws.Cells(START_PANEL_ROW + 1, "M"), ws.Cells(r, "M"))
+            .NumberFormat = "dd.mm.yyyy"
+            .Interior.Color = C_INPUT
+            .Borders.Color = C_BORDER
+            .HorizontalAlignment = xlRight
+        End With
+    End If
+    ws.Cells(r + 2, "L").Value = "Wpisz datÍ pierwszego zakupu; automat policzy dywidendy od tej daty (przycisk POBIERZ DYWIDENDY)."
+    ws.Cells(r + 2, "L").Font.Size = 9
+    ws.Cells(r + 2, "L").Font.Color = C_MUTED
+    ws.Range(ws.Cells(START_PANEL_ROW - 1, "L"), ws.Cells(r + 2, "M")).Interior.Color = C_PANEL
+    ws.Range(ws.Cells(START_PANEL_ROW + 1, "M"), ws.Cells(Application.Max(r, START_PANEL_ROW + 1), "M")).Interior.Color = C_INPUT
 End Sub
 
 ' Dodatek: szacunek podatku Belki (19%) za wybrany rok.
@@ -2195,15 +2270,18 @@ Private Sub BuildBelkaPanel(ByVal ws As Worksheet, ByVal taxYear As Variant, ByV
 
         .Range("L8").Value = "Zrealizowany wynik ze sprzedaøy"
         .Range("M8").Formula2 = "=IFERROR(LET(rokP,$M$6,daty,Transakcje!$A$30:$A$500,typy,Transakcje!$C$30:$C$500,wyniki,Transakcje!$I$30:$I$500," & _
-            "SUM(IF((typy=""Sprzedaø"")*ISNUMBER(daty)*ISNUMBER(wyniki),IF(YEAR(daty)=rokP,wyniki,0),0))),0)"
+            "SUM(IF((typy=""Sprzedaø"")*ISNUMBER(daty)*ISNUMBER(wyniki),IF(YEAR(daty)=rokP,wyniki,0),0))),0)" & _
+            "+IFERROR(SUMPRODUCT((YEAR(" & REALIZED_TABLE & "[Data])=$M$6)*" & REALIZED_TABLE & "[Wynik (PLN)]),0)"
         .Range("L9").Value = "Podatek od sprzedaøy (19%)"
         .Range("M9").Formula2 = "=MAX(0,M8)*0.19"
         .Range("L10").Value = "Dop≥ata od dywidend zagranicznych"
         .Range("M10").Formula2 = "=IFERROR(LET(rokP,$M$6,dDaty,INDEX(" & DATA_SHEET & "!$AP$2#,0,1),dNazwy,INDEX(" & DATA_SHEET & "!$AP$2#,0,2)," & _
             "dKwoty,INDEX(" & DATA_SHEET & "!$AP$2#,0,3),dPodatki,INDEX(" & DATA_SHEET & "!$AP$2#,0,4),dNetto,INDEX(" & DATA_SHEET & "!$AP$2#,0,5)," & _
+            "dZrodla,INDEX(" & DATA_SHEET & "!$AP$2#,0,6)," & _
             "waluty,XLOOKUP(dNazwy,Notowania!$A$7:$A$502,Notowania!$F$7:$F$502,""PLN"")," & _
             "stawki,XLOOKUP(waluty,$L$15:$L$18,$M$15:$M$18,0.19)," & _
-            "brutto,IF(dPodatki>0,dKwoty,dNetto/(1-stawki)),pobrany,IF(dPodatki>0,dPodatki,brutto*stawki)," & _
+            "znane,(dPodatki>0)+(dZrodla=""" & DIV_T212_SOURCE & """)+(dZrodla=""" & DIV_AUTO_SOURCE & """)," & _
+            "brutto,IF(znane,dKwoty,dNetto/(1-stawki)),pobrany,IF(znane,dPodatki,brutto*stawki)," & _
             "doplata,IF(YEAR(dDaty)=rokP,IF(0.19*brutto-pobrany>0,0.19*brutto-pobrany,0),0),SUM(doplata)),0)"
         .Range("L11").Value = "Razem do zap≥aty (szacunek)"
         .Range("M11").Formula2 = "=M9+M10"
@@ -2280,7 +2358,7 @@ End Sub
 
 Public Function SyncDividends(ByVal force As Boolean) As Boolean
     Dim wsQ As Worksheet, wsD As Worksheet, wsT As Worksheet, wsP As Worksheet
-    Dim loH As ListObject, loS As ListObject, loF As ListObject
+    Dim loH As ListObject, loF As ListObject
     Dim ledger As Variant, initRows As Variant
     Dim r As Long, lastQ As Long, k As Long, i As Long, posRow As Long
     Dim sym As String, nm As String, cur As String
@@ -2298,7 +2376,6 @@ Public Function SyncDividends(ByVal force As Boolean) As Boolean
     Set wsT = ThisWorkbook.Worksheets("Transakcje")
     Set wsP = ThisWorkbook.Worksheets("Pozycje")
     Set loH = FindTable(DIV_HISTORY_TABLE)
-    Set loS = FindTable(POS_START_TABLE)
     Set loF = FindTable(DIV_FORECAST_TABLE)
     If loH Is Nothing Or loF Is Nothing Then Exit Function
 
@@ -2334,7 +2411,7 @@ Public Function SyncDividends(ByVal force As Boolean) As Boolean
                 w = WithholdingRate(CStr(wsQ.Cells(r, "F").Value))
 
                 ' Od kiedy liczyÊ: pÛüniejsza z dat - poczπtek posiadania / ostatnia wpisana wyp≥ata.
-                threshold = StartDateFor(loS, nm, trackStart)
+                threshold = StartDateFor(nm, trackStart)
                 If LastManualDividend(loH, ledger, nm) > threshold Then threshold = LastManualDividend(loH, ledger, nm)
 
                 dps12 = 0
@@ -2343,9 +2420,10 @@ Public Function SyncDividends(ByVal force As Boolean) As Boolean
                     If exDates(k) > Date - 365 And exDates(k) <= Date Then dps12 = dps12 + amounts(k)
                     If exDates(k) <= Date And exDates(k) > lastEx Then lastEx = exDates(k)
                     If exDates(k) > threshold And exDates(k) <= Date Then
-                        units = UnitsHeldAt(nm, exDates(k), initRows, ledger, StartDateFor(loS, nm, trackStart))
+                        units = UnitsHeldAt(nm, exDates(k), initRows, ledger, StartDateFor(nm, trackStart))
                         If units > 0 Then
-                            autoRows.Add Array(exDates(k), nm, Round(amounts(k) * units * fx * (1 - w), 2), DIV_AUTO_SOURCE)
+                            autoRows.Add Array(exDates(k), nm, Round(amounts(k) * units * fx * (1 - w), 2), DIV_AUTO_SOURCE, _
+                                               Round(amounts(k) * units * fx * w, 2), "")
                         End If
                     End If
                 Next k
@@ -2514,19 +2592,6 @@ Private Function WithholdingRate(ByVal currencyCode As String) As Double
     Next i
 End Function
 
-' Poczπtek posiadania pozycji z salda poczπtkowego (tabela PoczatekPozycji).
-' Brak daty = liczone dopiero od rozpoczÍcia úledzenia dywidend.
-Private Function StartDateFor(ByVal loS As ListObject, ByVal nm As String, ByVal fallback As Date) As Date
-    Dim lr As ListRow
-    StartDateFor = fallback
-    If loS Is Nothing Then Exit Function
-    For Each lr In loS.ListRows
-        If StrComp(Trim$(CStr(lr.Range.Cells(1, 1).Value)), nm, vbTextCompare) = 0 Then
-            If IsDate(lr.Range.Cells(1, 2).Value) Then StartDateFor = CDate(lr.Range.Cells(1, 2).Value)
-            Exit Function
-        End If
-    Next lr
-End Function
 
 ' Data ostatniej dywidendy wpisanej rÍcznie (tabela lub rejestr transakcji).
 Private Function LastManualDividend(ByVal loH As ListObject, ByVal ledger As Variant, ByVal nm As String) As Date
@@ -2586,59 +2651,344 @@ Private Function EnsureTable(ByVal wsD As Worksheet, ByVal tableName As String, 
     Set EnsureTable = lo
 End Function
 
-' Tabele dywidend + dane startowe (wyp≥aty przys≥ane przez uøytkownika i daty
-' poczπtku pozycji z salda poczπtkowego).
+' Tabele dywidend i wynikÛw sprzedaøy (arkusz Dane).
 Private Sub SetupDividendTables(ByVal wsD As Worksheet)
-    Dim loH As ListObject, loS As ListObject
-    Dim seed As Variant, item As Variant
-    Dim hasManual As Boolean
-    Dim lr As ListRow
-    Dim initNames As Variant
-    Dim i As Long, found As Boolean
+    Dim loH As ListObject
 
-    Set loH = EnsureTable(wsD, DIV_HISTORY_TABLE, "BA1", Array("Data", "SpÛ≥ka", "Kwota netto (PLN)", "èrÛd≥o"))
-    Set loS = EnsureTable(wsD, POS_START_TABLE, "BF1", Array("SpÛ≥ka", "Posiadane od"))
+    Set loH = EnsureTable(wsD, DIV_HISTORY_TABLE, "BA1", Array("Data", "SpÛ≥ka", "Kwota netto (PLN)", "èrÛd≥o", "Podatek u ürÛd≥a (PLN)", "Klucz"))
+    EnsureColumns loH, Array("Data", "SpÛ≥ka", "Kwota netto (PLN)", "èrÛd≥o", "Podatek u ürÛd≥a (PLN)", "Klucz")
     EnsureTable wsD, DIV_FORECAST_TABLE, "BI1", Array("SpÛ≥ka", "Dywidenda na akcjÍ 12 mies.", "Waluta", "Liczba jednostek", _
                 "Prognoza 12 mies. netto (PLN)", "Stopa dywidendy", "Koszt pozycji (PLN)", "Ostatnia dywidenda")
+    EnsureTable wsD, REALIZED_TABLE, "BS1", Array("Data", "SpÛ≥ka", "Wynik (PLN)", "Klucz")
 
-    ' Wyp≥aty otrzymane (wpisywane raz, przy pierwszej instalacji).
-    For Each lr In loH.ListRows
-        If CStr(lr.Range.Cells(1, 4).Value) = DIV_MANUAL_SOURCE Then hasManual = True
-    Next lr
-    If Not hasManual Then
-        seed = ReceivedDividendsSeed()
-        If IsArray(seed) Then
-            For Each item In seed
-                loH.ListRows.Add.Range.Value = Array(item(0), item(1), item(2), DIV_MANUAL_SOURCE)
-            Next item
-        End If
-    End If
-
-    ' Daty poczπtku dla pozycji z salda poczπtkowego.
-    initNames = ThisWorkbook.Worksheets("Transakcje").Range("B7:B29").Value
-    For i = 1 To UBound(initNames, 1)
-        If Len(Trim$(CStr(initNames(i, 1)))) > 0 Then
-            found = False
-            For Each lr In loS.ListRows
-                If StrComp(CStr(lr.Range.Cells(1, 1).Value), CStr(initNames(i, 1)), vbTextCompare) = 0 Then found = True
-            Next lr
-            If Not found Then loS.ListRows.Add.Range.Value = Array(CStr(initNames(i, 1)), PositionStartSeed(CStr(initNames(i, 1))))
-        End If
-    Next i
-    If Not loS.DataBodyRange Is Nothing Then loS.ListColumns(2).DataBodyRange.NumberFormat = "dd.mm.yyyy"
     If Not IsDate(wsD.Range("AB31").Value) Then wsD.Range("AB31").Value = Date
     wsD.Range("AB31").NumberFormat = "dd.mm.yyyy"
     wsD.Range("AA30").Value = "Ostatnie pobranie dywidend"
     wsD.Range("AA31").Value = "Poczπtek automatycznego liczenia dywidend"
+    wsD.Range("AA32").Value = "DzieÒ salda poczπtkowego (import Trading 212)"
+    ThisWorkbook.Worksheets("Transakcje").Range("S6").Value = "ID importu"
 End Sub
 
-' Dywidendy otrzymane przed automatem: Array(data, spÛ≥ka, kwota netto PLN).
-' Uzupe≥niane danymi od uøytkownika.
-Private Function ReceivedDividendsSeed() As Variant
-    ReceivedDividendsSeed = Empty
+Private Sub EnsureColumns(ByVal lo As ListObject, ByVal headers As Variant)
+    Dim h As Variant
+    For Each h In headers
+        If Not ListColumnExists(lo, CStr(h)) Then lo.ListColumns.Add.Name = CStr(h)
+    Next h
+End Sub
+
+' Data zakupu pozycji z salda poczπtkowego - z panelu w arkuszu Dywidendy
+' (kolumny L:M od wiersza START_PANEL_ROW). Brak daty = od poczπtku automatu.
+Private Function StartDateFor(ByVal nm As String, ByVal fallback As Date) As Date
+    Dim ws As Worksheet
+    Dim r As Long
+    StartDateFor = fallback
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(DIVIDEND_SHEET)
+    On Error GoTo 0
+    If ws Is Nothing Then Exit Function
+    For r = START_PANEL_ROW + 1 To START_PANEL_ROW + 60
+        If Len(Trim$(CStr(ws.Cells(r, "L").Value))) = 0 Then Exit Function
+        If StrComp(Trim$(CStr(ws.Cells(r, "L").Value)), nm, vbTextCompare) = 0 Then
+            If IsDate(ws.Cells(r, "M").Value) Then StartDateFor = CDate(ws.Cells(r, "M").Value)
+            Exit Function
+        End If
+    Next r
 End Function
 
-' Data zakupu pozycji z salda poczπtkowego (pusta = nieznana).
-Private Function PositionStartSeed(ByVal nm As String) As Variant
-    PositionStartSeed = Empty
+' ---------------------------------------------------------------------------
+' IMPORT Z TRADING 212 (pliki CSV z historii konta)
+' - dywidendy (ca≥a historia) -> tabela DywidendyHistoria, z podatkiem u ürÛd≥a,
+' - wynik sprzedaøy sprzed salda poczπtkowego -> tabela WynikiSprzedazy (Belka),
+' - kupno, sprzedaø, wp≥aty i wydatki kartπ PO dniu salda poczπtkowego
+'   -> rejestr w arkuszu Transakcje (wczeúniejsze sπ juø w saldzie poczπtkowym).
+' Kaødy wiersz ma klucz, wiÍc ponowny import tych samych plikÛw niczego nie dubluje.
+' ---------------------------------------------------------------------------
+Public Sub ImportTrading212()
+    Dim files As Variant
+    Dim f As Variant
+    Dim wsT As Worksheet, wsP As Worksheet, wsQ As Worksheet, wsD As Worksheet
+    Dim loH As ListObject, loR As ListObject
+    Dim keys As Object
+    Dim lines As Variant, header As Variant, fields As Variant
+    Dim col As Object
+    Dim i As Long, j As Long
+    Dim action As String, rowKey As String, ticker As String, t212Name As String, isin As String
+    Dim priceCur As String, totalCur As String
+    Dim tradeDate As Date, cutoff As Date
+    Dim total As Double, shares As Double, wht As Double, rate As Double
+    Dim nDiv As Long, nTx As Long, nReal As Long, nSkip As Long, nNew As Long, nErr As Long
+    Dim displayName As String, quoteRow As Long
+    Dim tx As PendingTx
+    Dim errList As String
+
+    files = Application.GetOpenFilename("Eksport Trading 212 (*.csv),*.csv", , "Wybierz pliki CSV z Trading 212 (moøna kilka)", , True)
+    If Not IsArray(files) Then Exit Sub
+
+    On Error GoTo Failed
+    Set wsT = ThisWorkbook.Worksheets("Transakcje")
+    Set wsP = ThisWorkbook.Worksheets("Pozycje")
+    Set wsQ = ThisWorkbook.Worksheets("Notowania")
+    Set wsD = ThisWorkbook.Worksheets(DATA_SHEET)
+    Set loH = FindTable(DIV_HISTORY_TABLE)
+    Set loR = FindTable(REALIZED_TABLE)
+    If loH Is Nothing Or loR Is Nothing Then Err.Raise vbObjectError + 2300, , "uruchom najpierw InstallPortfolioTools."
+    cutoff = ImportCutoff()
+
+    Set keys = CreateObject("Scripting.Dictionary")
+    CollectKeys keys, loH, 6
+    CollectKeys keys, loR, 4
+    For i = FIRST_LEDGER_ROW To LAST_SUPPORTED_ROW
+        If Len(CStr(wsT.Cells(i, "S").Value)) > 0 Then keys(CStr(wsT.Cells(i, "S").Value)) = True
+    Next i
+
+    Application.ScreenUpdating = False
+    For Each f In files
+        lines = Split(Replace(ReadUtf8File(CStr(f)), vbCrLf, vbLf), vbLf)
+        If UBound(lines) < 1 Then GoTo NextFile
+        header = SplitCsvLine(CStr(lines(0)))
+        Set col = CreateObject("Scripting.Dictionary")
+        For j = LBound(header) To UBound(header)
+            col(CStr(header(j))) = j
+        Next j
+        If Not col.Exists("Action") Or Not col.Exists("Time (UTC)") Or Not col.Exists("Total") Then
+            Err.Raise vbObjectError + 2301, , "plik " & CStr(f) & " nie wyglπda na eksport z Trading 212."
+        End If
+
+        For i = 1 To UBound(lines)
+            If Len(Trim$(CStr(lines(i)))) = 0 Then GoTo NextLine
+            fields = SplitCsvLine(CStr(lines(i)))
+            action = CsvField(fields, col, "Action")
+            tradeDate = ParseT212Date(CsvField(fields, col, "Time (UTC)"))
+            ticker = CsvField(fields, col, "Ticker")
+            t212Name = CsvField(fields, col, "Name")
+            isin = CsvField(fields, col, "ISIN")
+            priceCur = CsvField(fields, col, "Currency (Price / share)")
+            totalCur = CsvField(fields, col, "Currency (Total)")
+            total = Val(CsvField(fields, col, "Total"))
+            shares = Val(CsvField(fields, col, "No. of shares"))
+            If totalCur = "EUR" Then total = total * FxToPln(wsQ, "EUR")
+            If totalCur = "USD" Then total = total * FxToPln(wsQ, "USD")
+            If totalCur = "GBP" Then total = total * FxToPln(wsQ, "GBP")
+            rowKey = "T212|" & action & "|" & CsvField(fields, col, "Time (UTC)") & "|" & ticker & "|" & CsvField(fields, col, "ID") & "|" & CsvField(fields, col, "Total")
+            If keys.Exists(rowKey) Then
+                nSkip = nSkip + 1
+                GoTo NextLine
+            End If
+
+            displayName = vbNullString
+            quoteRow = 0
+            If Len(ticker) > 0 Then
+                quoteRow = FindQuoteByYahooSymbol(wsQ, T212YahooSymbol(ticker, priceCur, isin))
+                If quoteRow > 0 Then displayName = CStr(wsQ.Cells(quoteRow, "A").Value) Else displayName = t212Name
+            End If
+
+            If Left$(action, 8) = "Dividend" Then
+                wht = Val(CsvField(fields, col, "Withholding tax"))
+                rate = Val(CsvField(fields, col, "Exchange rate"))
+                If wht < 0 Then wht = 0
+                loH.ListRows.Add.Range.Value = Array(tradeDate, displayName, Round(total, 2), DIV_T212_SOURCE, Round(wht * rate, 2), rowKey)
+                keys(rowKey) = True
+                nDiv = nDiv + 1
+
+            ElseIf tradeDate < cutoff Then
+                ' Przed saldem poczπtkowym: tylko wynik sprzedaøy (do szacunku podatku).
+                If action = "Market sell" Or action = "Limit sell" Or action = "Stop sell" Then
+                    loR.ListRows.Add.Range.Value = Array(tradeDate, displayName, Val(CsvField(fields, col, "Result")), rowKey)
+                    keys(rowKey) = True
+                    nReal = nReal + 1
+                End If
+
+            Else
+                ' Po saldzie poczπtkowym: do rejestru transakcji.
+                tx.Operation = vbNullString
+                tx.DisplayName = displayName
+                tx.Units = shares
+                tx.Amount = Abs(total)
+                tx.Fee = 0
+                tx.IsNewInstrument = False
+                Select Case action
+                    Case "Market buy", "Limit buy", "Stop buy": tx.Operation = OP_BUY
+                    Case "Market sell", "Limit sell", "Stop sell": tx.Operation = OP_SELL
+                    Case "Deposit", "Spending cashback": tx.Operation = OP_DEPOSIT: tx.DisplayName = vbNullString
+                    Case "Withdrawal", "Card debit": tx.Operation = OP_WITHDRAW: tx.DisplayName = vbNullString
+                End Select
+                If Len(tx.Operation) > 0 And tx.Amount > 0 Then
+                    If (tx.Operation = OP_BUY Or tx.Operation = OP_SELL) And quoteRow = 0 Then
+                        If tx.Operation = OP_SELL Then
+                            errList = errList & vbCrLf & "- sprzedaø " & t212Name & " (brak w portfelu)"
+                            nErr = nErr + 1
+                            GoTo NextLine
+                        End If
+                        tx.Ticker = UCase$(ticker)
+                        tx.DisplayName = t212Name
+                        tx.AssetClass = IIf(Left$(isin, 2) = "IE" Or Left$(isin, 2) = "LU", "ETF-y", "Akcje")
+                        tx.UnitPricePLN = tx.Amount / IIf(shares > 0, shares, 1)
+                        ExchangeDetails T212Exchange(priceCur), tx.Ticker, tx.YahooSymbol, tx.CurrencyCode, tx.MarketPrefix, tx.ExchangeName
+                        If FindPositionByName(wsP, tx.DisplayName) = 0 Then
+                            RegisterInstrument wsP, wsQ, tx
+                            nNew = nNew + 1
+                        End If
+                    End If
+                    j = NextLedgerRow(wsT)
+                    If j > LAST_SUPPORTED_ROW Then Err.Raise vbObjectError + 2302, , "brak wolnych wierszy w rejestrze transakcji."
+                    WriteLedgerRow wsT, j, tx
+                    wsT.Cells(j, "A").Value = tradeDate
+                    wsT.Cells(j, "S").Value = rowKey
+                    keys(rowKey) = True
+                    nTx = nTx + 1
+                End If
+            End If
+NextLine:
+        Next i
+NextFile:
+    Next f
+
+    FormatImportTables loH, loR
+    Application.Calculate
+    If nNew > 0 Then BuildDashboard
+    BuildDividendsSheet
+    SyncDividends True
+    RecordPortfolioSnapshot
+    RefreshDashboardVisuals
+    Application.ScreenUpdating = True
+    MsgBox "Import z Trading 212 zakoÒczony." & vbCrLf & vbCrLf & _
+           "Dywidendy: " & nDiv & vbCrLf & _
+           "Wyniki sprzedaøy sprzed " & Format$(cutoff, "dd.mm.yyyy") & ": " & nReal & vbCrLf & _
+           "Transakcje i wp≥aty od " & Format$(cutoff, "dd.mm.yyyy") & ": " & nTx & IIf(nNew > 0, " (nowe instrumenty: " & nNew & ")", "") & vbCrLf & _
+           "PominiÍte (juø zaimportowane): " & nSkip & _
+           IIf(nErr > 0, vbCrLf & vbCrLf & "Nie zaimportowano:" & errList, ""), vbInformation, "Portfel inwestycyjny"
+    Exit Sub
+
+Failed:
+    Application.ScreenUpdating = True
+    MsgBox "Import przerwany: " & Err.Description, vbExclamation, "Portfel inwestycyjny"
+End Sub
+
+' DzieÒ salda poczπtkowego: transakcje sprzed tej daty sπ juø w saldzie
+' w arkuszu Transakcje (wiersze 7-29). Ustalany raz (pierwszy wpis historii portfela).
+Private Function ImportCutoff() As Date
+    Dim wsD As Worksheet
+    Dim lo As ListObject
+    Set wsD = ThisWorkbook.Worksheets(DATA_SHEET)
+    If Not IsDate(wsD.Range("AB32").Value) Then
+        wsD.Range("AB32").Value = Date
+        Set lo = GetHistoryTable()
+        If Not lo Is Nothing Then
+            If Not lo.DataBodyRange Is Nothing Then
+                If IsDate(lo.ListRows(1).Range.Cells(1, 1).Value) Then wsD.Range("AB32").Value = Int(CDbl(CDate(lo.ListRows(1).Range.Cells(1, 1).Value)))
+            End If
+        End If
+        wsD.Range("AB32").NumberFormat = "dd.mm.yyyy"
+    End If
+    ImportCutoff = CDate(wsD.Range("AB32").Value)
+End Function
+
+Private Sub CollectKeys(ByVal keys As Object, ByVal lo As ListObject, ByVal keyCol As Long)
+    Dim lr As ListRow
+    For Each lr In lo.ListRows
+        If Len(CStr(lr.Range.Cells(1, keyCol).Value)) > 0 Then keys(CStr(lr.Range.Cells(1, keyCol).Value)) = True
+    Next lr
+End Sub
+
+Private Sub FormatImportTables(ByVal loH As ListObject, ByVal loR As ListObject)
+    If Not loH.DataBodyRange Is Nothing Then
+        loH.ListColumns(1).DataBodyRange.NumberFormat = "dd.mm.yyyy"
+        loH.ListColumns(3).DataBodyRange.NumberFormat = "#,##0.00"
+        loH.ListColumns(5).DataBodyRange.NumberFormat = "#,##0.00"
+        With loH.Sort
+            .SortFields.Clear
+            .SortFields.Add Key:=loH.ListColumns(1).DataBodyRange, Order:=xlDescending
+            .Header = xlYes
+            .Apply
+        End With
+    End If
+    If Not loR.DataBodyRange Is Nothing Then
+        loR.ListColumns(1).DataBodyRange.NumberFormat = "dd.mm.yyyy"
+        loR.ListColumns(3).DataBodyRange.NumberFormat = "#,##0.00"
+    End If
+End Sub
+
+Private Function T212YahooSymbol(ByVal ticker As String, ByVal priceCur As String, ByVal isin As String) As String
+    Select Case UCase$(priceCur)
+        Case "GBX", "GBP": T212YahooSymbol = ticker & ".L"
+        Case "EUR": T212YahooSymbol = ticker & ".DE"
+        Case "PLN": T212YahooSymbol = ticker & ".WA"
+        Case Else: T212YahooSymbol = Replace(ticker, ".", "-")
+    End Select
+End Function
+
+Private Function T212Exchange(ByVal priceCur As String) As String
+    Select Case UCase$(priceCur)
+        Case "GBX", "GBP": T212Exchange = "LSE"
+        Case "EUR": T212Exchange = "XETRA"
+        Case "PLN": T212Exchange = "GPW"
+        Case Else: T212Exchange = "NASDAQ"
+    End Select
+End Function
+
+Private Function FxToPln(ByVal wsQ As Worksheet, ByVal currencyCode As String) As Double
+    Dim r As Long
+    FxToPln = 1
+    For r = 7 To 9
+        If UCase$(Left$(CStr(wsQ.Cells(r, "M").Value), 3)) = currencyCode And IsNumeric(wsQ.Cells(r, "N").Value) Then
+            If Val(CStr(wsQ.Cells(r, "N").Value)) > 0 Then FxToPln = CDbl(wsQ.Cells(r, "N").Value)
+        End If
+    Next r
+End Function
+
+Private Function ParseT212Date(ByVal s As String) As Date
+    ' "2026-02-16 08:00:31+00:00" -> data (bez godziny).
+    If Len(s) >= 10 Then ParseT212Date = DateSerial(Val(Mid$(s, 1, 4)), Val(Mid$(s, 6, 2)), Val(Mid$(s, 9, 2)))
+End Function
+
+Private Function CsvField(ByVal fields As Variant, ByVal col As Object, ByVal fieldName As String) As String
+    If col.Exists(fieldName) Then
+        If col(fieldName) <= UBound(fields) Then CsvField = Trim$(CStr(fields(col(fieldName))))
+    End If
+End Function
+
+Private Function ReadUtf8File(ByVal path As String) As String
+    Dim st As Object
+    Set st = CreateObject("ADODB.Stream")
+    st.Type = 2
+    st.Charset = "utf-8"
+    st.Open
+    st.LoadFromFile path
+    ReadUtf8File = st.ReadText
+    st.Close
+End Function
+
+' Podzia≥ wiersza CSV z obs≥ugπ pÛl w cudzys≥owach.
+Private Function SplitCsvLine(ByVal line As String) As Variant
+    Dim out() As String
+    Dim n As Long, i As Long
+    Dim ch As String, cur As String
+    Dim inQuotes As Boolean
+    ReDim out(0 To 0)
+    For i = 1 To Len(line)
+        ch = Mid$(line, i, 1)
+        If inQuotes Then
+            If ch = """" Then
+                If Mid$(line, i + 1, 1) = """" Then
+                    cur = cur & """"
+                    i = i + 1
+                Else
+                    inQuotes = False
+                End If
+            Else
+                cur = cur & ch
+            End If
+        ElseIf ch = """" Then
+            inQuotes = True
+        ElseIf ch = "," Then
+            out(n) = cur
+            n = n + 1
+            ReDim Preserve out(0 To n)
+            cur = vbNullString
+        Else
+            cur = cur & ch
+        End If
+    Next i
+    out(n) = cur
+    SplitCsvLine = out
 End Function

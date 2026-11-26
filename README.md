@@ -83,8 +83,8 @@ Arkusz **Nowe transakcje**, jeden wiersz = jedna operacja, potem **ZAPISZ TRANSA
   „automatycznie (szacunek)”. To tylko statystyki: gotówka się nie zmienia.
 - **Wypłaty otrzymane** (wpisane przez użytkownika albo typ Dywidenda w rejestrze) mają pierwszeństwo:
   automat liczy tylko dywidendy z ex-date po ostatniej wpisanej wypłacie danej spółki.
-- **Pozycje z salda początkowego** nie mają daty zakupu; tabela `PoczatekPozycji` (arkusz Dane) mówi,
-  od kiedy je liczyć. Bez daty automat liczy dopiero od dnia instalacji.
+- **Pozycje z salda początkowego** nie mają daty zakupu; panel „Od kiedy masz akcje” w arkuszu Dywidendy
+  mówi automatowi, od kiedy liczyć ich dywidendy wstecz. Bez daty automat liczy od dnia instalacji.
 - **Prognoza na 12 miesięcy** = dywidendy na akcję z ostatnich 12 miesięcy × obecna liczba jednostek, netto.
   Z niej liczone są stopa dywidendy portfela i stopa od kosztu.
 - Kursy walut do przeliczenia dywidend są bieżące (szacunek).
@@ -92,3 +92,16 @@ Arkusz **Nowe transakcje**, jeden wiersz = jedna operacja, potem **ZAPISZ TRANSA
   do dywidend zagranicznych. Kwotę brutto i podatek pobrany u źródła wylicza się ze stawek w tabeli założeń
   (domyślnie PLN 19%, USD 15%, GBP 0%, EUR 0%; można je zmienić). Urząd liczy koszt metodą FIFO i po kursach NBP,
   więc wynik to tylko orientacja; do PIT-38 służy PIT-8C od brokera.
+
+## Import z Trading 212
+
+Przycisk **IMPORTUJ Z TRADING 212** (Dashboard, Dywidendy) wczytuje pliki CSV z historii konta
+(Trading 212 → Historia → Eksportuj; można zaznaczyć kilka plików naraz):
+
+- **dywidendy** z całej historii → tabela `DywidendyHistoria` (kwota netto i podatek pobrany u źródła),
+- **wynik sprzedaży** sprzed dnia salda początkowego → tabela `WynikiSprzedazy` (do szacunku podatku Belki),
+- **zakupy, sprzedaże, wpłaty i wydatki kartą** po dniu salda początkowego → rejestr w arkuszu Transakcje
+  (wcześniejsze operacje są już w saldzie początkowym). Nowe spółki są dodawane automatycznie.
+
+Każdy zaimportowany wiersz ma klucz (kolumna S w Transakcjach, kolumna „Klucz” w tabelach), więc ponowny
+import tych samych plików niczego nie dubluje. Dzień salda początkowego jest zapisany w `Dane!AB32`.
