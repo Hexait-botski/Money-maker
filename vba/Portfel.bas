@@ -1373,7 +1373,8 @@ Private Sub SetupDataSheet()
     Dim lo As ListObject
     Dim vals As Variant
     Dim nRows As Long
-    Dim specs As Variant
+    Dim specs As Collection
+    Dim spec As Variant
     Dim i As Long
 
     On Error Resume Next
@@ -1413,43 +1414,43 @@ Private Sub SetupDataSheet()
     End If
 
     ' Kluczowe liczby: etykieta w AA, formu³a w AB.
-    specs = Array( _
-        Array(2, "Wartoœæ portfela", "=SUM(Pozycje!$G$5:$G$500)+AB6", "#,##0.00 ""z³"";-#,##0.00 ""z³"""), _
-        Array(3, "Wp³aty netto", "=Transakcje!$R$7", "#,##0.00 ""z³"";-#,##0.00 ""z³"""), _
-        Array(4, "Zysk / strata", "=AB2-AB3", "+#,##0.00 ""z³"";-#,##0.00 ""z³"";0.00 ""z³"""), _
-        Array(5, "Stopa zwrotu", "=IF(AB3=0,"""",AB4/AB3)", "+0.0%;-0.0%;0.0%"), _
-        Array(6, "Gotówka", "=Transakcje!$R$6", "#,##0.00 ""z³"";-#,##0.00 ""z³"""), _
-        Array(7, "Udzia³ gotówki", "=IF(AB2=0,"""",AB6/AB2)", "0.0%"), _
-        Array(8, "Poprzedni odczyt - wartoœæ", "=IFERROR(LET(daty," & HISTORY_TABLE & "[Data],wart," & HISTORY_TABLE & "[Wartoœæ portfela],ileW,ROWS(wart)," & _
-              "pozW,IF(INT(INDEX(daty,ileW))=TODAY(),ileW-1,ileW),IF(pozW<1,"""",INDEX(wart,pozW))),"""")", "#,##0.00 ""z³"""), _
-        Array(9, "Poprzedni odczyt - data", "=IFERROR(LET(daty," & HISTORY_TABLE & "[Data],ileW,ROWS(daty)," & _
-              "pozW,IF(INT(INDEX(daty,ileW))=TODAY(),ileW-1,ileW),IF(pozW<1,"""",INDEX(daty,pozW))),"""")", "dd.mm.yyyy hh:mm"), _
-        Array(10, "Zmiana od odczytu", "=IFERROR(IF(AB8="""","""",AB2/AB8-1),"""")", ChrW(9650) & " 0.0%;" & ChrW(9660) & " 0.0%;0.0%"), _
-        Array(11, "Kursy z", "=IFERROR(IF(COUNT(" & HISTORY_TABLE & "[Data])=0,"""",MAX(" & HISTORY_TABLE & "[Data])),"""")", "dd.mm.yyyy hh:mm"), _
-        Array(12, "Najlepsza pozycja", "=IFERROR(INDEX(AH2#,1,1),"""")", "General"), _
-        Array(13, "Najs³absza pozycja", "=IFERROR(INDEX(AH2#,ROWS(AH2#),1),"""")", "General"), _
-        Array(14, "Wynik najs³abszej", "=IFERROR(INDEX(AH2#,ROWS(AH2#),2),0)", "#,##0.00"), _
-        Array(15, "Liczba pozycji", "=SUMPRODUCT((Pozycje!$B$5:$B$500<>"""")*ISNUMBER(Pozycje!$H$5:$H$500))", "0"), _
-        Array(16, "Zdanie podsumowania", "=""Portfel jest wart ""&FIXED(AB2,2)&"" z³, czyli ""&IF(AB4>=0,FIXED(AB4,2)&"" z³ ponad wp³aty."",FIXED(-AB4,2)&"" z³ poni¿ej wp³at."")" & _
-              "&IF(AB12="""","""","" Najwiêcej zarobi³a pozycja ""&AB12&IF(AB14<0,"", najwiêcej traci ""&AB13&""."","".""))", "General"), _
-        Array(17, "Tekst od odczytu", "=IF(ISNUMBER(AB9),""od odczytu ""&RIGHT(""0""&DAY(AB9),2)&"".""&RIGHT(""0""&MONTH(AB9),2)&"" ""&RIGHT(""0""&HOUR(AB9),2)&"":""&RIGHT(""0""&MINUTE(AB9),2),""brak wczeœniejszego odczytu"")", "General"), _
-        Array(18, "Tekst kursy z", "=IF(ISNUMBER(AB11),""Kursy z ""&RIGHT(""0""&DAY(AB11),2)&"".""&RIGHT(""0""&MONTH(AB11),2)&"".""&YEAR(AB11)&"" ""&RIGHT(""0""&HOUR(AB11),2)&"":""&RIGHT(""0""&MINUTE(AB11),2),""Kursy: brak aktualizacji"")", "General"), _
-        Array(19, "Tekst gotówki", "=IFERROR(FIXED(AB7*100,1)&""% portfela w gotówce"","""")", "General"), _
-        Array(20, "Dywidendy netto - 12 mies.", "=IFERROR(SUMPRODUCT((INDEX(AP2#,0,1)>EDATE(TODAY(),-12))*INDEX(AP2#,0,5)),0)", "#,##0.00 ""z³"""), _
-        Array(21, "Dywidendy netto - ³¹cznie", "=IFERROR(SUM(INDEX(AP2#,0,5)),0)", "#,##0.00 ""z³"""), _
-        Array(22, "Dywidendy netto - bie¿¹cy rok", "=IFERROR(SUMPRODUCT((YEAR(INDEX(AP2#,0,1))=YEAR(TODAY()))*INDEX(AP2#,0,5)),0)", "#,##0.00 ""z³"""), _
-        Array(23, "Koszt pozycji wyp³acaj¹cych", "=SUMIF(Pozycje!$C$5:$C$500,""Tak"",Pozycje!$F$5:$F$500)", "#,##0.00 ""z³"""), _
-        Array(24, "Stopa od kosztu (prognoza)", "=IFERROR(AB28/SUMIFS(" & DIV_FORECAST_TABLE & "[Koszt pozycji (PLN)]," & DIV_FORECAST_TABLE & "[Prognoza 12 mies. netto (PLN)],"">0""),0)", "0.00%"), _
-        Array(25, "Spó³ki wyp³acaj¹ce", "=IFERROR(COUNTIF(" & DIV_FORECAST_TABLE & "[Prognoza 12 mies. netto (PLN)],"">0""),0)", "0"), _
-        Array(26, "Tekst dywidend", "=""otrzymane w 12 mies.: ""&FIXED(AB20,2)&"" z³""", "General"), _
-        Array(27, "Dywidendy - œrednio miesiêcznie", "=AB20/12", "#,##0.00 ""z³"""), _
-        Array(28, "Prognoza dywidend 12 mies. (netto)", "=IFERROR(SUM(" & DIV_FORECAST_TABLE & "[Prognoza 12 mies. netto (PLN)]),0)", "#,##0.00 ""z³"""), _
-        Array(29, "Stopa dywidendy portfela", "=IFERROR(AB28/(AB2-AB6),0)", "0.00%"))
+    Set specs = New Collection
+    specs.Add Array(2, "Wartoœæ portfela", "=SUM(Pozycje!$G$5:$G$500)+AB6", "#,##0.00 ""z³"";-#,##0.00 ""z³""")
+    specs.Add Array(3, "Wp³aty netto", "=Transakcje!$R$7", "#,##0.00 ""z³"";-#,##0.00 ""z³""")
+    specs.Add Array(4, "Zysk / strata", "=AB2-AB3", "+#,##0.00 ""z³"";-#,##0.00 ""z³"";0.00 ""z³""")
+    specs.Add Array(5, "Stopa zwrotu", "=IF(AB3=0,"""",AB4/AB3)", "+0.0%;-0.0%;0.0%")
+    specs.Add Array(6, "Gotówka", "=Transakcje!$R$6", "#,##0.00 ""z³"";-#,##0.00 ""z³""")
+    specs.Add Array(7, "Udzia³ gotówki", "=IF(AB2=0,"""",AB6/AB2)", "0.0%")
+    specs.Add Array(8, "Poprzedni odczyt - wartoœæ", "=IFERROR(LET(daty," & HISTORY_TABLE & "[Data],wart," & HISTORY_TABLE & "[Wartoœæ portfela],ileW,ROWS(wart)," & _
+              "pozW,IF(INT(INDEX(daty,ileW))=TODAY(),ileW-1,ileW),IF(pozW<1,"""",INDEX(wart,pozW))),"""")", "#,##0.00 ""z³""")
+    specs.Add Array(9, "Poprzedni odczyt - data", "=IFERROR(LET(daty," & HISTORY_TABLE & "[Data],ileW,ROWS(daty)," & _
+              "pozW,IF(INT(INDEX(daty,ileW))=TODAY(),ileW-1,ileW),IF(pozW<1,"""",INDEX(daty,pozW))),"""")", "dd.mm.yyyy hh:mm")
+    specs.Add Array(10, "Zmiana od odczytu", "=IFERROR(IF(AB8="""","""",AB2/AB8-1),"""")", ChrW(9650) & " 0.0%;" & ChrW(9660) & " 0.0%;0.0%")
+    specs.Add Array(11, "Kursy z", "=IFERROR(IF(COUNT(" & HISTORY_TABLE & "[Data])=0,"""",MAX(" & HISTORY_TABLE & "[Data])),"""")", "dd.mm.yyyy hh:mm")
+    specs.Add Array(12, "Najlepsza pozycja", "=IFERROR(INDEX(AH2#,1,1),"""")", "General")
+    specs.Add Array(13, "Najs³absza pozycja", "=IFERROR(INDEX(AH2#,ROWS(AH2#),1),"""")", "General")
+    specs.Add Array(14, "Wynik najs³abszej", "=IFERROR(INDEX(AH2#,ROWS(AH2#),2),0)", "#,##0.00")
+    specs.Add Array(15, "Liczba pozycji", "=SUMPRODUCT((Pozycje!$B$5:$B$500<>"""")*ISNUMBER(Pozycje!$H$5:$H$500))", "0")
+    specs.Add Array(16, "Zdanie podsumowania", "=""Portfel jest wart ""&FIXED(AB2,2)&"" z³, czyli ""&IF(AB4>=0,FIXED(AB4,2)&"" z³ ponad wp³aty."",FIXED(-AB4,2)&"" z³ poni¿ej wp³at."")" & _
+              "&IF(AB12="""","""","" Najwiêcej zarobi³a pozycja ""&AB12&IF(AB14<0,"", najwiêcej traci ""&AB13&""."","".""))", "General")
+    specs.Add Array(17, "Tekst od odczytu", "=IF(ISNUMBER(AB9),""od odczytu ""&RIGHT(""0""&DAY(AB9),2)&"".""&RIGHT(""0""&MONTH(AB9),2)&"" ""&RIGHT(""0""&HOUR(AB9),2)&"":""&RIGHT(""0""&MINUTE(AB9),2),""brak wczeœniejszego odczytu"")", "General")
+    specs.Add Array(18, "Tekst kursy z", "=IF(ISNUMBER(AB11),""Kursy z ""&RIGHT(""0""&DAY(AB11),2)&"".""&RIGHT(""0""&MONTH(AB11),2)&"".""&YEAR(AB11)&"" ""&RIGHT(""0""&HOUR(AB11),2)&"":""&RIGHT(""0""&MINUTE(AB11),2),""Kursy: brak aktualizacji"")", "General")
+    specs.Add Array(19, "Tekst gotówki", "=IFERROR(FIXED(AB7*100,1)&""% portfela w gotówce"","""")", "General")
+    specs.Add Array(20, "Dywidendy netto - 12 mies.", "=IFERROR(SUMPRODUCT((INDEX(AP2#,0,1)>EDATE(TODAY(),-12))*INDEX(AP2#,0,5)),0)", "#,##0.00 ""z³""")
+    specs.Add Array(21, "Dywidendy netto - ³¹cznie", "=IFERROR(SUM(INDEX(AP2#,0,5)),0)", "#,##0.00 ""z³""")
+    specs.Add Array(22, "Dywidendy netto - bie¿¹cy rok", "=IFERROR(SUMPRODUCT((YEAR(INDEX(AP2#,0,1))=YEAR(TODAY()))*INDEX(AP2#,0,5)),0)", "#,##0.00 ""z³""")
+    specs.Add Array(23, "Koszt pozycji wyp³acaj¹cych", "=SUMIF(Pozycje!$C$5:$C$500,""Tak"",Pozycje!$F$5:$F$500)", "#,##0.00 ""z³""")
+    specs.Add Array(24, "Stopa od kosztu (prognoza)", "=IFERROR(AB28/SUMIFS(" & DIV_FORECAST_TABLE & "[Koszt pozycji (PLN)]," & DIV_FORECAST_TABLE & "[Prognoza 12 mies. netto (PLN)],"">0""),0)", "0.00%")
+    specs.Add Array(25, "Spó³ki wyp³acaj¹ce", "=IFERROR(COUNTIF(" & DIV_FORECAST_TABLE & "[Prognoza 12 mies. netto (PLN)],"">0""),0)", "0")
+    specs.Add Array(26, "Tekst dywidend", "=""otrzymane w 12 mies.: ""&FIXED(AB20,2)&"" z³""", "General")
+    specs.Add Array(27, "Dywidendy - œrednio miesiêcznie", "=AB20/12", "#,##0.00 ""z³""")
+    specs.Add Array(28, "Prognoza dywidend 12 mies. (netto)", "=IFERROR(SUM(" & DIV_FORECAST_TABLE & "[Prognoza 12 mies. netto (PLN)]),0)", "#,##0.00 ""z³""")
+    specs.Add Array(29, "Stopa dywidendy portfela", "=IFERROR(AB28/(AB2-AB6),0)", "0.00%")
     wsD.Range("AA1:AB1").Value = Array("Kluczowe liczby (Dashboard)", "Wartoœæ")
-    For i = LBound(specs) To UBound(specs)
-        wsD.Cells(specs(i)(0), "AA").Value = specs(i)(1)
-        wsD.Cells(specs(i)(0), "AB").NumberFormat = specs(i)(3)
-    Next i
+    For Each spec In specs
+        wsD.Cells(spec(0), "AA").Value = spec(1)
+        wsD.Cells(spec(0), "AB").NumberFormat = spec(3)
+    Next spec
 
     ' Sk³ad portfela: klasy (wiersze 2-4) i waluty (wiersze 7-10).
     wsD.Range("AD1:AF1").Value = Array("Klasa / waluta", "Wartoœæ (PLN)", "Udzia³")
@@ -1507,9 +1508,9 @@ Private Sub SetupDataSheet()
     wsD.Range("AN2:AN4").Value = Application.WorksheetFunction.Transpose(Array("Wszystkie", "Akcje", "ETF-y"))
 
     ' Formu³y AB wpisywane na koñcu (korzystaj¹ z AH2#).
-    For i = LBound(specs) To UBound(specs)
-        wsD.Cells(specs(i)(0), "AB").Formula2 = specs(i)(2)
-    Next i
+    For Each spec In specs
+        wsD.Cells(spec(0), "AB").Formula2 = spec(2)
+    Next spec
 
     wsD.Columns("AA").ColumnWidth = 30
     wsD.Columns("AB").ColumnWidth = 22
