@@ -100,8 +100,9 @@ Przycisk **IMPORT TRADING 212** (Dashboard, Dywidendy) wczytuje pliki CSV z hist
 
 - **dywidendy** z całej historii → tabela `DywidendyHistoria` (kwota netto i podatek pobrany u źródła),
 - **wynik sprzedaży** sprzed dnia salda początkowego → tabela `WynikiSprzedazy` (do szacunku podatku Belki),
-- **zakupy, sprzedaże, wpłaty i wydatki kartą** po dniu salda początkowego → rejestr w arkuszu Transakcje
+- **zakupy, sprzedaże, wpłaty i wypłaty** po dniu salda początkowego → rejestr w arkuszu Transakcje
   (wcześniejsze operacje są już w saldzie początkowym). Nowe spółki są dodawane automatycznie.
+  Wydatki kartą i cashback nie są liczone.
 
 Każdy zaimportowany wiersz ma klucz (kolumna S w Transakcjach, kolumna „Klucz” w tabelach), więc ponowny
 import tych samych plików niczego nie dubluje. Dzień salda początkowego jest zapisany w `Dane!AB32`.
