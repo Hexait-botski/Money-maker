@@ -8,13 +8,19 @@ portfela nie jest tu przechowywany (patrz `.gitignore`).
 
 ## Zawartość
 
+Kod VBA jest podzielony na 5 modułów (każdy poniżej limitu ok. 64 KB na moduł):
+
 | Plik | Opis |
 |---|---|
-| `vba/Portfel.bas` | Cały kod VBA w jednym module: kursy z Yahoo, arkusz „Nowe transakcje”, historia portfela, instalator. |
+| `vba/PortfelKursy.bas` | Ustawienia (stałe, kolory), kursy z Yahoo, aktualizacja przy otwarciu, historia portfela. |
+| `vba/PortfelTransakcje.bas` | Arkusz „Nowe transakcje”, zapis do rejestru, dodawanie nowych instrumentów. |
+| `vba/PortfelWidoki.bas` | Instalator, Dashboard, arkusze Analiza i Dane, przyciski, motyw. |
+| `vba/PortfelDywidendy.bas` | Arkusz Dywidendy, automat dywidend z Yahoo, szacunek podatku Belki. |
+| `vba/PortfelImport.bas` | Import historii z Trading 212 (CSV) i XTB (XLSX). |
 
-`Portfel.bas` jest zapisany w kodowaniu **Windows-1250** z końcami linii CRLF, bo tak
-importuje go edytor VBA. Na GitHubie polskie znaki w podglądzie mogą wyglądać źle,
-ale pobrany plik (przycisk *Download raw file*) jest poprawny.
+Pliki `.bas` są zapisane w kodowaniu **Windows-1250** z końcami linii CRLF, bo tak importuje je
+edytor VBA. Na GitHubie polskie znaki w podglądzie mogą wyglądać źle, ale pobrany plik
+(*Download raw file*) jest poprawny.
 
 ## Arkusze skoroszytu
 
@@ -32,7 +38,7 @@ ale pobrany plik (przycisk *Download raw file*) jest poprawny.
 1. Zrób kopię zapasową `Money Money.xlsm`.
 2. Otwórz plik, włącz makra, naciśnij **Alt+F11**.
 3. Usuń wszystkie moduły z folderu *Modules* (prawy klik → *Remove* → „Nie” przy pytaniu o eksport).
-4. **File → Import File…** → `vba/Portfel.bas`.
+4. **File → Import File…** → kolejno 5 plików z katalogu `vba/`.
 5. **Debug → Compile VBAProject** (bez komunikatów).
 6. W Excelu **Alt+F8** → `InstallPortfolioTools` → *Uruchom*.
 7. Zapisz plik (**Ctrl+S**).

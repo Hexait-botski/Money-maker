@@ -1,0 +1,605 @@
+Attribute VB_Name = "PortfelTransakcje"
+Option Explicit
+
+' Przycisk "DODAJ TRANSAKCJE" w arkuszach Dashboard i Transakcje.
+Public Sub OpenTransactionEntry()
+    With ThisWorkbook.Worksheets(ENTRY_SHEET)
+        .Activate
+        .Cells(ENTRY_FIRST_ROW, COL_TYPE).Select
+    End With
+End Sub
+
+' Przycisk "WYCZYŒÆ".
+Public Sub ClearNewTransactions()
+    If MsgBox("Wyczyœciæ wszystkie wpisane, niezapisane wiersze?", vbQuestion + vbYesNo, _
+              "Nowe transakcje") = vbYes Then
+        ThisWorkbook.Worksheets(ENTRY_SHEET).Range( _
+            ThisWorkbook.Worksheets(ENTRY_SHEET).Cells(ENTRY_FIRST_ROW, COL_TYPE), _
+            ThisWorkbook.Worksheets(ENTRY_SHEET).Cells(ENTRY_LAST_ROW, COL_STATUS)).ClearContents
+    End If
+End Sub
+
+' Przycisk "ZAPISZ TRANSAKCJE".
+Public Sub SaveNewTransactions()
+    Dim wsE As Worksheet, wsT As Worksheet, wsP As Worksheet, wsQ As Worksheet
+    Dim txs() As PendingTx
+    Dim holdings As Object
+    Dim r As Long, i As Long, n As Long
+    Dim errorCount As Long, newCount As Long
+    Dim msg As String
+    Dim ledgerRow As Long
+
+    Set wsE = ThisWorkbook.Worksheets(ENTRY_SHEET)
+    Set wsT = ThisWorkbook.Worksheets("Transakcje")
+    Set wsP = ThisWorkbook.Worksheets("Pozycje")
+    Set wsQ = ThisWorkbook.Worksheets("Notowania")
+
+    For r = ENTRY_FIRST_ROW To ENTRY_LAST_ROW
+        If RowHasInput(wsE, r) Then n = n + 1
+    Next r
+    If n = 0 Then
+        MsgBox "Brak transakcji do zapisania. Wpisz je w wierszach " & ENTRY_FIRST_ROW & "-" & _
+               ENTRY_LAST_ROW & ".", vbInformation, "Nowe transakcje"
+        Exit Sub
+    End If
+
+    ledgerRow = NextLedgerRow(wsT)
+    If ledgerRow + n - 1 > LAST_SUPPORTED_ROW Then
+        MsgBox "W rejestrze transakcji brakuje wolnych wierszy (limit: wiersz " & LAST_SUPPORTED_ROW & ").", _
+               vbExclamation, "Nowe transakcje"
+        Exit Sub
+    End If
+
+    ReDim txs(1 To n)
+    Set holdings = CreateObject("Scripting.Dictionary")
+    holdings.CompareMode = vbTextCompare
+
+    ' 1) Sprawdzenie wszystkich wierszy - nic nie jest jeszcze zapisywane.
+    i = 0
+    For r = ENTRY_FIRST_ROW To ENTRY_LAST_ROW
+        If RowHasInput(wsE, r) Then
+            i = i + 1
+            txs(i).EntryRow = r
+            msg = ValidateEntryRow(wsE, wsP, wsQ, r, holdings, txs(i))
+            If Len(msg) > 0 Then
+                wsE.Cells(r, COL_STATUS).Value = "B£¥D: " & msg
+                errorCount = errorCount + 1
+            Else
+                wsE.Cells(r, COL_STATUS).Value = "OK"
+            End If
+        End If
+    Next r
+
+    If errorCount > 0 Then
+        MsgBox "Nic nie zosta³o zapisane. Popraw wiersze oznaczone w kolumnie Status (" & _
+               errorCount & ") i kliknij ZAPISZ ponownie.", vbExclamation, "Nowe transakcje"
+        Exit Sub
+    End If
+
+    ' 2) Zapis.
+    On Error GoTo Failed
+    Application.ScreenUpdating = False
+    For i = 1 To n
+        If txs(i).IsNewInstrument Then
+            If FindPositionByName(wsP, txs(i).DisplayName) = 0 Then
+                RegisterInstrument wsP, wsQ, txs(i)
+                newCount = newCount + 1
+            End If
+        End If
+        ledgerRow = NextLedgerRow(wsT)
+        WriteLedgerRow wsT, ledgerRow, txs(i)
+    Next i
+
+    If newCount > 0 Then
+        BuildDashboard
+        BuildDividendsSheet
+    End If
+
+    For i = 1 To n
+        wsE.Range(wsE.Cells(txs(i).EntryRow, COL_TYPE), wsE.Cells(txs(i).EntryRow, COL_LAST_INPUT)).ClearContents
+        wsE.Cells(txs(i).EntryRow, COL_STATUS).Value = "Zapisano " & Format$(Now, "dd.mm.yyyy hh:mm")
+    Next i
+
+    Application.Calculate
+    Application.ScreenUpdating = True
+    On Error GoTo 0
+
+    If newCount > 0 Then
+        ' Nowy instrument - od razu pobierz jego kurs (zapisze te¿ historiê portfela).
+        UpdatePortfolioQuotes False
+    Else
+        RecordPortfolioSnapshot
+        RefreshDashboardVisuals
+    End If
+
+    MsgBox "Zapisano " & n & " transakcji" & IIf(newCount > 0, " (nowe instrumenty: " & newCount & ")", "") & "." & _
+           vbCrLf & "Gotówka i zrealizowany wynik s¹ liczone w arkuszu Transakcje.", _
+           vbInformation, "Portfel inwestycyjny"
+    Exit Sub
+
+Failed:
+    Application.ScreenUpdating = True
+    MsgBox "Zapis przerwany: " & Err.Description & vbCrLf & _
+           "SprawdŸ koñcówkê arkusza Transakcje - czêœæ wierszy mog³a zostaæ dopisana.", _
+           vbCritical, "Nowe transakcje"
+End Sub
+
+' ---------------------------------------------------------------------------
+' Sprawdzanie jednego wiersza. Zwraca pusty tekst, gdy wiersz jest poprawny.
+' ---------------------------------------------------------------------------
+Public Function ValidateEntryRow(ByVal wsE As Worksheet, ByVal wsP As Worksheet, ByVal wsQ As Worksheet, _
+                                  ByVal r As Long, ByVal holdings As Object, ByRef tx As PendingTx) As String
+    Dim nameInput As String, exchInput As String, classInput As String
+    Dim available As Double
+    Dim found As Boolean
+
+    On Error GoTo Bad
+
+    tx.Operation = NormalizeOperation(CStr(wsE.Cells(r, COL_TYPE).Value))
+    nameInput = Trim$(CStr(wsE.Cells(r, COL_NAME).Value))
+    exchInput = Trim$(CStr(wsE.Cells(r, COL_EXCH).Value))
+    classInput = Trim$(CStr(wsE.Cells(r, COL_CLASS).Value))
+    tx.Units = ReadNumber(wsE.Cells(r, COL_UNITS))
+    tx.Amount = ReadNumber(wsE.Cells(r, COL_AMOUNT))
+    tx.Fee = 0
+
+    If Len(tx.Operation) = 0 Then
+        ValidateEntryRow = "wybierz typ operacji (kolumna A)."
+        Exit Function
+    End If
+    If tx.Amount <= 0 Then
+        ValidateEntryRow = "podaj kwotê w PLN (kolumna D)."
+        Exit Function
+    End If
+
+    ' Wp³ata / Wyp³ata: wystarczy kwota.
+    If tx.Operation = OP_DEPOSIT Or tx.Operation = OP_WITHDRAW Then
+        tx.DisplayName = vbNullString
+        tx.Units = 0
+        Exit Function
+    End If
+
+    If Len(nameInput) = 0 Then
+        ValidateEntryRow = "wybierz instrument z listy albo wpisz ticker (kolumna B)."
+        Exit Function
+    End If
+    found = ResolveInstrument(wsP, wsQ, nameInput, exchInput, tx)
+    If Not found And holdings.Exists(UCase$(nameInput)) Then
+        ' Nowy ticker kupiony wczeœniej w tej samej partii.
+        tx.DisplayName = UCase$(nameInput)
+        found = True
+    End If
+
+    ' Dywidenda: instrument + kwota, która wp³ynê³a na konto.
+    If tx.Operation = OP_DIVIDEND Then
+        tx.Units = 0
+        If Not found Then ValidateEntryRow = "nie znaleziono """ & nameInput & """ w portfelu."
+        Exit Function
+    End If
+
+    ' Kupno / Sprzeda¿: liczba jednostek + kwota ca³ej transakcji.
+    If tx.Units <= 0 Then
+        ValidateEntryRow = "podaj liczbê jednostek (kolumna C)."
+        Exit Function
+    End If
+    tx.UnitPricePLN = tx.Amount / tx.Units
+
+    If Not found Then
+        If tx.Operation = OP_SELL Then
+            ValidateEntryRow = "nie znaleziono """ & nameInput & """ w portfelu - nie ma czego sprzedaæ."
+            Exit Function
+        End If
+        If Len(exchInput) = 0 Or (classInput <> "Akcje" And classInput <> "ETF-y") Then
+            ValidateEntryRow = """" & nameInput & """ to nowy ticker - wybierz gie³dê (kolumna E) i klasê (kolumna F)."
+            Exit Function
+        End If
+        tx.Ticker = UCase$(nameInput)
+        tx.DisplayName = tx.Ticker
+        tx.AssetClass = classInput
+        tx.IsNewInstrument = True
+        ExchangeDetails exchInput, tx.Ticker, tx.YahooSymbol, tx.CurrencyCode, tx.MarketPrefix, tx.ExchangeName
+    End If
+
+    If Not holdings.Exists(tx.DisplayName) Then
+        holdings.Add tx.DisplayName, CurrentUnits(wsP, tx.DisplayName)
+    End If
+    available = CDbl(holdings(tx.DisplayName))
+    If tx.Operation = OP_SELL Then
+        If tx.Units > available + 0.00000001 Then
+            ValidateEntryRow = "sprzeda¿ przekracza stan (posiadasz " & Format$(available, "0.0000") & ")."
+            Exit Function
+        End If
+        holdings(tx.DisplayName) = available - tx.Units
+    Else
+        holdings(tx.DisplayName) = available + tx.Units
+    End If
+    Exit Function
+
+Bad:
+    ValidateEntryRow = Err.Description
+End Function
+
+' Szuka instrumentu: po nazwie z portfela, po tickerze + gie³dzie albo po samym tickerze.
+Public Function ResolveInstrument(ByVal wsP As Worksheet, ByVal wsQ As Worksheet, _
+                                   ByVal nameInput As String, ByVal exchInput As String, _
+                                   ByRef tx As PendingTx) As Boolean
+    Dim posRow As Long, quoteRow As Long, r As Long, lastRow As Long
+    Dim sym As String, cur As String, pre As String, exName As String
+    Dim marketTicker As String, matchRow As Long, matchCount As Long
+
+    posRow = FindPositionByName(wsP, nameInput)
+    If posRow > 0 Then
+        tx.DisplayName = CStr(wsP.Cells(posRow, "B").Value)
+        ResolveInstrument = True
+        Exit Function
+    End If
+
+    If Len(exchInput) > 0 Then
+        ExchangeDetails exchInput, UCase$(nameInput), sym, cur, pre, exName
+        quoteRow = FindQuoteByYahooSymbol(wsQ, sym)
+        If quoteRow > 0 Then
+            tx.DisplayName = CStr(wsQ.Cells(quoteRow, "A").Value)
+            ResolveInstrument = True
+        End If
+        Exit Function
+    End If
+
+    ' Sam ticker bez gie³dy, np. "AAPL" albo "PZU": porównanie z kolumn¹ B (XNAS:AAPL).
+    lastRow = wsQ.Cells(wsQ.Rows.Count, "S").End(xlUp).Row
+    For r = FIRST_QUOTE_ROW To lastRow
+        marketTicker = CStr(wsQ.Cells(r, "B").Value)
+        If InStr(marketTicker, ":") > 0 Then marketTicker = Mid$(marketTicker, InStr(marketTicker, ":") + 1)
+        If StrComp(Trim$(marketTicker), nameInput, vbTextCompare) = 0 Then
+            matchCount = matchCount + 1
+            matchRow = r
+        End If
+    Next r
+    If matchCount = 1 Then
+        tx.DisplayName = CStr(wsQ.Cells(matchRow, "A").Value)
+        ResolveInstrument = True
+    ElseIf matchCount > 1 Then
+        Err.Raise vbObjectError + 2111, , "ticker """ & nameInput & """ wystêpuje na kilku gie³dach - wybierz gie³dê (kolumna C)."
+    End If
+End Function
+
+Public Function NormalizeOperation(ByVal rawValue As String) As String
+    Dim s As String
+    s = LCase$(Trim$(rawValue))
+    Select Case s
+        Case "kupno", "k", "buy": NormalizeOperation = OP_BUY
+        Case LCase$(OP_SELL), "sprzedaz", "s", "sell": NormalizeOperation = OP_SELL
+        Case LCase$(OP_DEPOSIT), "wplata": NormalizeOperation = OP_DEPOSIT
+        Case LCase$(OP_WITHDRAW), "wyplata": NormalizeOperation = OP_WITHDRAW
+        Case "dywidenda", "dyw": NormalizeOperation = OP_DIVIDEND
+        Case Else: NormalizeOperation = vbNullString
+    End Select
+End Function
+
+Public Function RowHasInput(ByVal ws As Worksheet, ByVal r As Long) As Boolean
+    Dim c As Long
+    For c = COL_TYPE To COL_LAST_INPUT
+        If Len(Trim$(CStr(ws.Cells(r, c).Value))) > 0 Then
+            RowHasInput = True
+            Exit Function
+        End If
+    Next c
+End Function
+
+' Liczba z komórki: pusta = 0; tekst typu "1 234,56" albo "12.5" jest zamieniany na liczbê.
+Public Function ReadNumber(ByVal cell As Range) As Double
+    Dim v As Variant
+    v = cell.Value
+    If IsError(v) Then Err.Raise vbObjectError + 2112, , "komórka " & cell.Address(False, False) & " zawiera b³¹d."
+    If IsEmpty(v) Then
+        ReadNumber = 0
+    ElseIf VarType(v) = vbString Then
+        If Len(Trim$(v)) = 0 Then
+            ReadNumber = 0
+        Else
+            ReadNumber = ParseTransactionNumber(CStr(v))
+        End If
+    Else
+        ReadNumber = CDbl(v)
+    End If
+End Function
+
+Public Function ParseTransactionNumber(ByVal rawValue As String) As Double
+    Dim s As String
+    Dim decimalSeparator As String
+    s = Trim$(Replace(rawValue, ChrW(160), ""))
+    s = Replace(s, " ", "")
+    s = Replace(s, "z³", "", , , vbTextCompare)
+    decimalSeparator = Application.International(xlDecimalSeparator)
+
+    If InStr(s, ",") > 0 And InStr(s, ".") = 0 Then
+        s = Replace(s, ",", decimalSeparator)
+    ElseIf InStr(s, ".") > 0 And InStr(s, ",") = 0 Then
+        s = Replace(s, ".", decimalSeparator)
+    ElseIf InStr(s, ".") > 0 And InStr(s, ",") > 0 Then
+        If InStrRev(s, ",") > InStrRev(s, ".") Then
+            s = Replace(s, ".", "")
+            s = Replace(s, ",", decimalSeparator)
+        Else
+            s = Replace(s, ",", "")
+            s = Replace(s, ".", decimalSeparator)
+        End If
+    End If
+
+    If Len(s) = 0 Or Not IsNumeric(s) Then Err.Raise vbObjectError + 2100, , "niepoprawna liczba: """ & rawValue & """."
+    ParseTransactionNumber = CDbl(s)
+End Function
+
+Public Function CurrentUnits(ByVal wsP As Worksheet, ByVal displayName As String) As Double
+    Dim posRow As Long
+    Dim v As Variant
+    posRow = FindPositionByName(wsP, displayName)
+    If posRow = 0 Then Exit Function
+    v = wsP.Cells(posRow, "D").Value
+    If Not IsError(v) And IsNumeric(v) And Not IsEmpty(v) Then CurrentUnits = CDbl(v)
+End Function
+
+Public Sub WriteLedgerRow(ByVal wsT As Worksheet, ByVal logRow As Long, ByRef tx As PendingTx)
+    With wsT
+        .Cells(logRow, "A").Value = Date
+        .Cells(logRow, "A").NumberFormat = "dd.mm.yyyy"
+        If Len(tx.DisplayName) > 0 Then
+            .Cells(logRow, "B").Value = tx.DisplayName
+        Else
+            .Cells(logRow, "B").ClearContents
+        End If
+        .Cells(logRow, "C").Value = tx.Operation
+        If tx.Operation = OP_BUY Or tx.Operation = OP_SELL Then
+            .Cells(logRow, "D").Value = tx.Units
+        Else
+            .Cells(logRow, "D").ClearContents
+        End If
+        .Cells(logRow, "E").Value = Round(tx.Amount, 2)
+        .Cells(logRow, "F").Value = Round(tx.Fee, 2)
+    End With
+End Sub
+
+Public Sub ExchangeDetails(ByVal exchangeInput As String, ByVal ticker As String, _
+                            ByRef yahooSymbol As String, ByRef currencyCode As String, _
+                            ByRef marketPrefix As String, ByRef exchangeName As String)
+    Select Case UCase$(Trim$(exchangeInput))
+        Case "GPW"
+            exchangeName = "GPW": currencyCode = "PLN": marketPrefix = "XWAR:": yahooSymbol = ticker & ".WA"
+        Case "NASDAQ"
+            exchangeName = "NASDAQ": currencyCode = "USD": marketPrefix = "XNAS:": yahooSymbol = ticker
+        Case "NYSE"
+            exchangeName = "NYSE": currencyCode = "USD": marketPrefix = "XNYS:": yahooSymbol = ticker
+        Case "XETRA"
+            exchangeName = "Xetra": currencyCode = "EUR": marketPrefix = "XETR:": yahooSymbol = ticker & ".DE"
+        Case "LSE"
+            exchangeName = "LSE": currencyCode = "GBP": marketPrefix = "XLON:": yahooSymbol = ticker & ".L"
+        Case Else
+            Err.Raise vbObjectError + 2110, , "nieobs³ugiwana gie³da: " & exchangeInput & " (GPW, NASDAQ, NYSE, Xetra, LSE)."
+    End Select
+    ' Yahoo zapisuje klasy akcji z myœlnikiem, np. BRK.B -> BRK-B.
+    If currencyCode = "USD" Then yahooSymbol = Replace(yahooSymbol, ".", "-")
+End Sub
+
+Public Function FindQuoteByYahooSymbol(ByVal ws As Worksheet, ByVal yahooSymbol As String) As Long
+    Dim lastRow As Long, r As Long
+    lastRow = ws.Cells(ws.Rows.Count, "S").End(xlUp).Row
+    If lastRow < FIRST_QUOTE_ROW Then Exit Function
+    For r = FIRST_QUOTE_ROW To lastRow
+        If StrComp(Trim$(CStr(ws.Cells(r, "S").Value)), yahooSymbol, vbTextCompare) = 0 Then
+            FindQuoteByYahooSymbol = r
+            Exit Function
+        End If
+    Next r
+End Function
+
+Public Function FindPositionByName(ByVal ws As Worksheet, ByVal displayName As String) As Long
+    Dim lastRow As Long, r As Long
+    lastRow = ws.Cells(ws.Rows.Count, "B").End(xlUp).Row
+    If lastRow < FIRST_POSITION_ROW Then Exit Function
+    For r = FIRST_POSITION_ROW To lastRow
+        If StrComp(Trim$(CStr(ws.Cells(r, "B").Value)), Trim$(displayName), vbTextCompare) = 0 Then
+            FindPositionByName = r
+            Exit Function
+        End If
+    Next r
+End Function
+
+Public Function NextLedgerRow(ByVal ws As Worksheet) As Long
+    Dim r As Long
+    For r = FIRST_LEDGER_ROW To LAST_SUPPORTED_ROW
+        If Len(Trim$(CStr(ws.Cells(r, "A").Value))) = 0 And _
+           Len(Trim$(CStr(ws.Cells(r, "B").Value))) = 0 And _
+           Len(Trim$(CStr(ws.Cells(r, "C").Value))) = 0 Then
+            NextLedgerRow = r
+            Exit Function
+        End If
+    Next r
+    NextLedgerRow = LAST_SUPPORTED_ROW + 1
+End Function
+
+' Dodaje nowy instrument: wiersz w Pozycje i odpowiadaj¹cy mu wiersz w Notowania
+' (wiersz w Notowania = wiersz w Pozycje + 2, tak jak w istniej¹cych danych).
+Public Sub RegisterInstrument(ByVal wsP As Worksheet, ByVal wsQ As Worksheet, ByRef tx As PendingTx)
+    Dim posRow As Long, quoteRow As Long
+    Dim fxRate As Double
+
+    posRow = wsP.Cells(wsP.Rows.Count, "B").End(xlUp).Row + 1
+    If posRow < FIRST_POSITION_ROW + 1 Then Err.Raise vbObjectError + 2107, , "arkusz Pozycje nie ma ¿adnej pozycji wzorcowej."
+    quoteRow = posRow + QUOTE_ROW_OFFSET
+    If quoteRow > LAST_SUPPORTED_ROW Then Err.Raise vbObjectError + 2107, , "brak miejsca na nowy instrument."
+    If Len(Trim$(CStr(wsQ.Cells(quoteRow, "S").Value))) > 0 Or Len(Trim$(CStr(wsQ.Cells(quoteRow, "B").Value))) > 0 Then
+        Err.Raise vbObjectError + 2108, , "wiersz " & quoteRow & " w arkuszu Notowania jest zajêty - arkusze Pozycje i Notowania nie s¹ zgrane."
+    End If
+
+    ' Kopia poprzedniego wiersza przenosi formu³y i formatowanie.
+    wsP.Rows(posRow - 1).Copy Destination:=wsP.Rows(posRow)
+    With wsP
+        .Cells(posRow, "A").Value = tx.AssetClass
+        .Cells(posRow, "B").Value = tx.DisplayName
+        .Cells(posRow, "C").Value = "Nieustalone"
+        .Cells(posRow, "G").Formula = "=Notowania!H" & quoteRow
+    End With
+
+    wsQ.Range("A" & (quoteRow - 1) & ":X" & (quoteRow - 1)).Copy Destination:=wsQ.Range("A" & quoteRow & ":X" & quoteRow)
+    With wsQ
+        .Cells(quoteRow, "A").Formula = "=Pozycje!B" & posRow
+        .Cells(quoteRow, "B").Value = tx.MarketPrefix & tx.Ticker
+        .Cells(quoteRow, "C").Value = tx.ExchangeName
+        .Cells(quoteRow, "D").Formula = "=IF(Pozycje!D" & posRow & "="""","""",Pozycje!D" & posRow & ")"
+        .Cells(quoteRow, "F").Value = tx.CurrencyCode
+        .Cells(quoteRow, "I").Formula = "=Pozycje!F" & posRow
+        .Cells(quoteRow, "S").Value = tx.YahooSymbol
+        .Range("T" & quoteRow & ":W" & quoteRow).ClearContents
+        .Cells(quoteRow, "X").Value = 1
+        Select Case tx.CurrencyCode
+            Case "PLN": fxRate = 1
+            Case "EUR": fxRate = NumVal(.Range("N7").Value)
+            Case "USD": fxRate = NumVal(.Range("N8").Value)
+            Case "GBP": fxRate = NumVal(.Range("N9").Value)
+        End Select
+        ' Cena zapasowa w walucie instrumentu = cena zakupu w PLN / kurs waluty.
+        If fxRate > 0 Then
+            .Cells(quoteRow, "O").Value = tx.UnitPricePLN / fxRate
+        Else
+            .Cells(quoteRow, "O").ClearContents
+        End If
+    End With
+End Sub
+
+Public Sub SetupEntrySheet(Optional ByVal fromCode As Boolean = False)
+    Dim ws As Worksheet
+
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(ENTRY_SHEET)
+    On Error GoTo 0
+    If ws Is Nothing Then
+        Set ws = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Worksheets("Transakcje"))
+        ws.Name = ENTRY_SHEET
+    Else
+        ' Arkusz budowany od nowa (np. po wczeœniejszej wersji z innymi kolumnami).
+        Do While ws.Shapes.Count > 0
+            ws.Shapes(1).Delete
+        Loop
+        On Error Resume Next
+        ws.Cells.Validation.Delete
+        On Error GoTo 0
+        ws.Cells.Clear
+        ws.Columns.Hidden = False
+    End If
+    ws.Activate
+    ActiveWindow.DisplayGridlines = False
+
+    With ws
+        .Cells.Font.Name = "Arial"
+        .Cells.Font.Size = 10
+
+        .Range("A1").Value = "NOWE TRANSAKCJE"
+        .Range("A1").Font.Size = 16
+        .Range("A1").Font.Bold = True
+        .Rows(1).RowHeight = 34
+        .Range("A1").VerticalAlignment = xlCenter
+        .Range("A2").Value = "Ka¿dy wiersz = jedna operacja. Wype³nij ¿ó³te pola i kliknij ZAPISZ TRANSAKCJE. Data = dzisiaj, wszystkie kwoty w PLN."
+        .Range("A3").Value = "Kupno / Sprzeda¿: instrument, liczba jednostek i kwota ca³ej transakcji.   Wp³ata / Wyp³ata: tylko kwota.   Dywidenda: instrument i kwota, która wp³ynê³a."
+        .Range("A4").Value = "Gie³dê i klasê wybierasz tylko przy pierwszym kupnie nowego tickera. Jeœli któryœ wiersz ma b³¹d, nic nie zostanie zapisane - opis w kolumnie Status."
+        .Range("A2:A4").Font.Color = RGB(71, 85, 105)
+
+        .Range(.Cells(ENTRY_HEADER_ROW, COL_TYPE), .Cells(ENTRY_HEADER_ROW, COL_STATUS)).Value = _
+            Array("Typ operacji", "Instrument / ticker", "Liczba jednostek", "Kwota (PLN)", _
+                  "Gie³da (tylko nowy ticker)", "Klasa (tylko nowy ticker)", "Status")
+        With .Range(.Cells(ENTRY_HEADER_ROW, COL_TYPE), .Cells(ENTRY_HEADER_ROW, COL_STATUS))
+            .Font.Bold = True
+            .Font.Color = RGB(255, 255, 255)
+            .Interior.Color = RGB(15, 23, 42)
+            .WrapText = True
+            .VerticalAlignment = xlCenter
+        End With
+        .Rows(ENTRY_HEADER_ROW).RowHeight = 30
+
+        ' Listy wyboru w ukrytych kolumnach L:N.
+        .Range("L5:N5").Value = Array("Typy", "Gie³dy", "Klasy")
+        .Range("L6:L10").Value = Application.WorksheetFunction.Transpose(Array(OP_BUY, OP_SELL, OP_DEPOSIT, OP_WITHDRAW, OP_DIVIDEND))
+        .Range("M6:M10").Value = Application.WorksheetFunction.Transpose(Array("GPW", "NASDAQ", "NYSE", "Xetra", "LSE"))
+        .Range("N6:N7").Value = Application.WorksheetFunction.Transpose(Array("Akcje", "ETF-y"))
+        .Columns("L:N").Hidden = True
+
+        With .Range(.Cells(ENTRY_FIRST_ROW, COL_TYPE), .Cells(ENTRY_LAST_ROW, COL_LAST_INPUT))
+            .Interior.Color = RGB(255, 247, 214)
+            .Borders.Color = RGB(226, 232, 240)
+        End With
+        .Range(.Cells(ENTRY_FIRST_ROW, COL_STATUS), .Cells(ENTRY_LAST_ROW, COL_STATUS)).Font.Color = RGB(71, 85, 105)
+
+        AddListValidation .Range(.Cells(ENTRY_FIRST_ROW, COL_TYPE), .Cells(ENTRY_LAST_ROW, COL_TYPE)), "=$L$6:$L$10", True
+        AddListValidation .Range(.Cells(ENTRY_FIRST_ROW, COL_NAME), .Cells(ENTRY_LAST_ROW, COL_NAME)), "=Pozycje!$B$5:$B$500", False
+        AddListValidation .Range(.Cells(ENTRY_FIRST_ROW, COL_EXCH), .Cells(ENTRY_LAST_ROW, COL_EXCH)), "=$M$6:$M$10", True
+        AddListValidation .Range(.Cells(ENTRY_FIRST_ROW, COL_CLASS), .Cells(ENTRY_LAST_ROW, COL_CLASS)), "=$N$6:$N$7", True
+
+        With .Range(.Cells(ENTRY_FIRST_ROW, COL_UNITS), .Cells(ENTRY_LAST_ROW, COL_AMOUNT)).Validation
+            .Delete
+            .Add Type:=xlValidateDecimal, AlertStyle:=xlValidAlertStop, Operator:=xlGreater, Formula1:="0"
+            .ErrorMessage = "Wpisz liczbê wiêksz¹ od zera."
+        End With
+        .Range(.Cells(ENTRY_FIRST_ROW, COL_UNITS), .Cells(ENTRY_LAST_ROW, COL_UNITS)).NumberFormat = "0.0000"
+        .Range(.Cells(ENTRY_FIRST_ROW, COL_AMOUNT), .Cells(ENTRY_LAST_ROW, COL_AMOUNT)).NumberFormat = "#,##0.00"
+
+        .Columns("A").ColumnWidth = 14
+        .Columns("B").ColumnWidth = 30
+        .Columns("C").ColumnWidth = 14
+        .Columns("D").ColumnWidth = 14
+        .Columns("E").ColumnWidth = 14
+        .Columns("F").ColumnWidth = 14
+        .Columns("G").ColumnWidth = 60
+    End With
+
+    ActiveWindow.FreezePanes = False
+    ws.Range("A6").Select
+    ActiveWindow.FreezePanes = True
+End Sub
+
+Public Sub AddListValidation(ByVal target As Range, ByVal listFormula As String, ByVal strict As Boolean)
+    With target.Validation
+        .Delete
+        .Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, Formula1:=listFormula
+        .IgnoreBlank = True
+        .InCellDropdown = True
+        .ShowError = strict
+        .ErrorMessage = "Wybierz wartoœæ z listy."
+    End With
+End Sub
+
+' Notowania: kurs zapasowy STOCKHISTORY dla spó³ek z Londynu jest w pensach.
+' Kolumna X przechowuje dzielnik (1 albo 100); formu³a ceny go uwzglêdnia.
+Public Sub SetupQuotesSheet(Optional ByVal fromCode As Boolean = False)
+    Dim ws As Worksheet
+    Dim lastRow As Long, r As Long
+
+    Set ws = ThisWorkbook.Worksheets("Notowania")
+    ws.Range("X6").Value = "Dzielnik STOCKHISTORY (100 = pensy)"
+    ws.Range("X6").Font.Bold = True
+    ws.Range("X6").WrapText = True
+
+    lastRow = ws.Cells(ws.Rows.Count, "S").End(xlUp).Row
+    For r = 7 To lastRow
+        If Len(Trim$(CStr(ws.Cells(r, "S").Value))) > 0 Then
+            If IsEmpty(ws.Cells(r, "X").Value) Or Not IsNumeric(ws.Cells(r, "X").Value) Then
+                ws.Cells(r, "X").Value = GuessPriceDivisor(ws, r)
+            End If
+            ws.Cells(r, "E").Formula = "=IF(NOT(ISNUMBER(G" & r & ")),"""",IF(ISNUMBER(T" & r & "),T" & r & "*G" & r & _
+                ",IF(ISNUMBER(P" & r & "),P" & r & "/IF(AND(ISNUMBER(X" & r & "),X" & r & ">0),X" & r & ",1)*G" & r & _
+                ",IF(ISNUMBER(O" & r & "),O" & r & "*G" & r & ",""""))))"
+            ws.Cells(r, "L").Formula = "=IF(ISNUMBER(T" & r & "),""Yahoo online"",IF(ISNUMBER(P" & r & "),""Kurs zamkniêcia"",""Cena zapasowa""))"
+        End If
+    Next r
+
+    ws.Range("A4").Value = "Kursy Yahoo mog¹ byæ opóŸnione. Przy braku ceny online u¿ywany jest kurs zamkniêcia (STOCKHISTORY), a potem cena zapasowa."
+End Sub
+
+Public Function GuessPriceDivisor(ByVal ws As Worksheet, ByVal r As Long) As Long
+    Dim p As Variant, o As Variant
+    GuessPriceDivisor = 1
+    If UCase$(Trim$(CStr(ws.Cells(r, "F").Value))) <> "GBP" Then Exit Function
+    p = ws.Cells(r, "P").Value
+    o = ws.Cells(r, "O").Value
+    If IsError(p) Or IsError(o) Then Exit Function
+    If Not IsNumeric(p) Or Not IsNumeric(o) Or IsEmpty(p) Or IsEmpty(o) Then Exit Function
+    If CDbl(o) <= 0 Then Exit Function
+    If CDbl(p) / CDbl(o) > 50 Then GuessPriceDivisor = 100
+End Function
