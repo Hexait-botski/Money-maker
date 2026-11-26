@@ -22,6 +22,27 @@ Private Declare Sub Sleep Lib "kernel32" (ByVal dwMilliseconds As Long)
 
 Public Const ENTRY_SHEET As String = "Nowe transakcje"
 Public Const ANALYSIS_SHEET As String = "Analiza"
+Public Const DASH_SHEET As String = "Dashboard"
+Public Const DATA_SHEET As String = "Dane"
+Public Const HISTORY_TABLE As String = "HistoriaPortfela"
+
+' Kolory motywu (ciemny).
+Private Const C_BG As Long = 1182986        ' #0a0d12 t≥o
+Private Const C_PANEL As Long = 1971729     ' #11161e panel
+Private Const C_FG As Long = 15788775       ' #e7eaf0 tekst
+Private Const C_MUTED As Long = 10983052    ' #8c96a7 tekst pomocniczy
+Private Const C_BORDER As Long = 3286558    ' #1e2632 linie
+Private Const C_OK As Long = 10081076       ' #34d399 zysk
+Private Const C_BAD As Long = 7434744       ' #f87171 strata
+Private Const C_WARN As Long = 2408443      ' #fbbf24
+Private Const C_ACCENT As Long = 16426336   ' #60a5fa
+Private Const C_ACCENT2 As Long = 16419751  ' #a78bfa
+Private Const C_TRACK As Long = 2892058     ' #1a212c
+Private Const C_HERO As Long = 4006675      ' #13233d
+Private Const C_HEROLINE As Long = 5190690  ' #22344f
+Private Const C_ROWLINE As Long = 2629143   ' #171e28
+Private Const C_INPUT As Long = 2826264     ' #18202b
+Private Const THEME_FONT As String = "Segoe UI"
 Public Const ENTRY_HEADER_ROW As Long = 5
 Public Const ENTRY_FIRST_ROW As Long = 6
 Public Const ENTRY_LAST_ROW As Long = 55
@@ -254,6 +275,7 @@ Public Function UpdatePortfolioQuotes(ByVal showMessage As Boolean) As Long
     ws.Range("A3").Value = "Ostatnie pobranie Yahoo: " & Format$(Now, "dd.mm.yyyy hh:mm:ss") & _
                            " | kursy spÛ≥ek: " & okCount & "/" & totalSymbols
     If okCount > 0 Then RecordPortfolioSnapshot
+    RefreshDashboardVisuals
 
     Application.StatusBar = False
     Application.ScreenUpdating = True
@@ -280,8 +302,8 @@ Failed:
     End If
 End Function
 
-' Dopisuje (raz dziennie) wartoúÊ portfela i wp≥aty netto do tabeli HistoriaPortfela
-' na Dashboardzie. Kolejne odúwieøenia tego samego dnia nadpisujπ dzisiejszy wpis.
+'' Dopisuje (raz dziennie) wartoúÊ portfela i wp≥aty netto do tabeli HistoriaPortfela
+' (ukryty arkusz Dane). Kolejne odúwieøenia tego samego dnia nadpisujπ dzisiejszy wpis.
 Public Sub RecordPortfolioSnapshot()
     Dim ws As Worksheet
     Dim lo As ListObject
@@ -292,10 +314,12 @@ Public Sub RecordPortfolioSnapshot()
     Dim sameDay As Boolean
 
     On Error GoTo Done
-    Set ws = ThisWorkbook.Worksheets("Dashboard")
-    Set lo = ws.ListObjects("HistoriaPortfela")
-    portfolioValue = ws.Range("A6").Value
-    netDeposits = ws.Range("D6").Value
+    Set ws = ThisWorkbook.Worksheets(DATA_SHEET)
+    Set lo = GetHistoryTable()
+    If lo Is Nothing Then Exit Sub
+    Application.Calculate
+    portfolioValue = ws.Range("AB2").Value
+    netDeposits = ws.Range("AB3").Value
     If IsError(portfolioValue) Or IsError(netDeposits) Then Exit Sub
     If Not IsNumeric(portfolioValue) Or Not IsNumeric(netDeposits) Then Exit Sub
     If CDbl(portfolioValue) <= 0 Then Exit Sub
@@ -305,6 +329,8 @@ Public Sub RecordPortfolioSnapshot()
         Set lr = lo.ListRows(lo.ListRows.Count)
         lastDate = lr.Range.Cells(1, 1).Value
         If IsDate(lastDate) Then sameDay = (Int(CDbl(CDate(lastDate))) = CLng(Date))
+        ' Pusty ostatni wiersz tabeli (np. úwieøo utworzonej) jest wykorzystywany.
+        If Len(Trim$(CStr(lr.Range.Cells(1, 2).Value))) = 0 Then sameDay = True
     End If
     If Not sameDay Then Set lr = lo.ListRows.Add
 
@@ -404,7 +430,7 @@ Public Sub SaveNewTransactions()
         WriteLedgerRow wsT, ledgerRow, txs(i)
     Next i
 
-    If newCount > 0 Then ApplyDashboardFormulas
+    If newCount > 0 Then BuildDashboard
 
     For i = 1 To n
         wsE.Range(wsE.Cells(txs(i).EntryRow, COL_TYPE), wsE.Cells(txs(i).EntryRow, COL_LAST_INPUT)).ClearContents
@@ -420,6 +446,7 @@ Public Sub SaveNewTransactions()
         UpdatePortfolioQuotes False
     Else
         RecordPortfolioSnapshot
+        RefreshDashboardVisuals
     End If
 
     MsgBox "Zapisano " & n & " transakcji" & IIf(newCount > 0, " (nowe instrumenty: " & newCount & ")", "") & "." & _
@@ -776,98 +803,6 @@ Private Sub RegisterInstrument(ByVal wsP As Worksheet, ByVal wsQ As Worksheet, B
 End Sub
 
 ' ---------------------------------------------------------------------------
-' Formu≥y Dashboardu zaleøne od liczby pozycji. Wywo≥ywane przez instalator
-' i po dodaniu nowego instrumentu.
-' ---------------------------------------------------------------------------
-Public Sub ApplyDashboardFormulas()
-    Dim ws As Worksheet, wsP As Worksheet
-    Dim r As Long, posRow As Long, lastPos As Long
-    Dim helperRow As Long, oldHelperRow As Long
-    Dim stockRows() As Long, stockCount As Long
-    Dim a As Long, b As Long, tmp As Long
-    Dim co As ChartObject
-
-    Set ws = ThisWorkbook.Worksheets("Dashboard")
-    Set wsP = ThisWorkbook.Worksheets("Pozycje")
-
-    ' Podsumowania liczone z ca≥ego zakresu pozycji (do wiersza 500).
-    ws.Range("A6").Formula = "=SUM(Pozycje!G5:G500)+C8"
-    ws.Range("B13").Formula = "=SUMIF(Pozycje!$A$5:$A$500,A13,Pozycje!$G$5:$G$500)"
-    ws.Range("B14").Formula = "=SUMIF(Pozycje!$A$5:$A$500,A14,Pozycje!$G$5:$G$500)"
-    ws.Range("E13").Formula = "=SUMIF(Pozycje!$A$5:$A$500,D13,Pozycje!$H$5:$H$500)"
-    ws.Range("E14").Formula = "=SUMIF(Pozycje!$A$5:$A$500,D14,Pozycje!$H$5:$H$500)"
-    ws.Range("F13").Formula = "=IFERROR(E13/SUMIF(Pozycje!$A$5:$A$500,D13,Pozycje!$F$5:$F$500),"""")"
-    ws.Range("F14").Formula = "=IFERROR(E14/SUMIF(Pozycje!$A$5:$A$500,D14,Pozycje!$F$5:$F$500),"""")"
-
-    ' Klucz sortowania w ukrytym arkuszu Pozycje (wartoúÊ + drobny dodatek,
-    ' øeby dwie pozycje o tej samej wartoúci nie dawa≥y duplikatu).
-    wsP.Range("J4").Value = "Klucz sortowania"
-    wsP.Range("J5:J500").Formula = "=IF(OR(B5="""",NOT(ISNUMBER(G5))),"""",G5+ROW()/1000000000)"
-
-    ' SzeúÊ najwiÍkszych pozycji - zawsze posortowane wed≥ug aktualnej wartoúci.
-    For r = 54 To 59
-        ws.Cells(r, "A").Formula = "=IFERROR(INDEX(Pozycje!$B$5:$B$500,MATCH(LARGE(Pozycje!$J$5:$J$500,ROWS($A$54:A" & r & ")),Pozycje!$J$5:$J$500,0)),"""")"
-        ws.Cells(r, "B").Formula = "=IF($A" & r & "="""","""",INDEX(Pozycje!$G$5:$G$500,MATCH($A" & r & ",Pozycje!$B$5:$B$500,0)))"
-        ws.Cells(r, "C").Formula = "=IF($A" & r & "="""","""",INDEX(Pozycje!$H$5:$H$500,MATCH($A" & r & ",Pozycje!$B$5:$B$500,0)))"
-        ws.Cells(r, "D").Formula = "=IF($A" & r & "="""","""",INDEX(Pozycje!$I$5:$I$500,MATCH($A" & r & ",Pozycje!$B$5:$B$500,0)))"
-        ws.Cells(r, "E").Formula = "=IFERROR(B" & r & "/$A$6,"""")"
-        ws.Cells(r, "F").Formula = "=IFERROR(IF(INDEX(Pozycje!$C$5:$C$500,MATCH($A" & r & ",Pozycje!$B$5:$B$500,0))=""Tak"",""Wyp≥aca"",INDEX(Pozycje!$C$5:$C$500,MATCH($A" & r & ",Pozycje!$B$5:$B$500,0))),"""")"
-    Next r
-
-    ' Dane pomocnicze wykresu zyskÛw/strat spÛ≥ek (G40:I...), alfabetycznie.
-    lastPos = wsP.Cells(wsP.Rows.Count, "B").End(xlUp).Row
-    ReDim stockRows(1 To IIf(lastPos >= FIRST_POSITION_ROW, lastPos - FIRST_POSITION_ROW + 1, 1))
-    For posRow = FIRST_POSITION_ROW To lastPos
-        If CStr(wsP.Cells(posRow, "A").Value) = "Akcje" And Len(Trim$(CStr(wsP.Cells(posRow, "B").Value))) > 0 Then
-            stockCount = stockCount + 1
-            stockRows(stockCount) = posRow
-        End If
-    Next posRow
-    For a = 1 To stockCount - 1
-        For b = a + 1 To stockCount
-            If StrComp(CStr(wsP.Cells(stockRows(b), "B").Value), CStr(wsP.Cells(stockRows(a), "B").Value), vbTextCompare) < 0 Then
-                tmp = stockRows(a): stockRows(a) = stockRows(b): stockRows(b) = tmp
-            End If
-        Next b
-    Next a
-
-    oldHelperRow = Application.WorksheetFunction.Max( _
-        ws.Cells(ws.Rows.Count, "G").End(xlUp).Row, _
-        ws.Cells(ws.Rows.Count, "H").End(xlUp).Row, _
-        ws.Cells(ws.Rows.Count, "I").End(xlUp).Row)
-    If oldHelperRow < 39 Then oldHelperRow = 39
-
-    helperRow = 39
-    For a = 1 To stockCount
-        helperRow = helperRow + 1
-        If helperRow > 59 Then ws.Range("G59:I59").Copy Destination:=ws.Range("G" & helperRow & ":I" & helperRow)
-        ws.Cells(helperRow, "G").Formula = "=Pozycje!B" & stockRows(a)
-        ws.Cells(helperRow, "H").Formula = "=MAX(Pozycje!H" & stockRows(a) & ",0)"
-        ws.Cells(helperRow, "I").Formula = "=MIN(Pozycje!H" & stockRows(a) & ",0)"
-    Next a
-    ' UsuniÍcie starych, zdublowanych wierszy pomocniczych (np. G60:H62).
-    If oldHelperRow > helperRow Then ws.Range("G" & (helperRow + 1) & ":I" & oldHelperRow).ClearContents
-
-    If helperRow >= 40 Then
-        On Error Resume Next
-        Set co = ws.ChartObjects("WykresZyskuPozycji")
-        On Error GoTo 0
-        If Not co Is Nothing Then
-            With co.Chart
-                If .SeriesCollection.Count >= 1 Then
-                    .SeriesCollection(1).XValues = ws.Range("G40:G" & helperRow)
-                    .SeriesCollection(1).Values = ws.Range("H40:H" & helperRow)
-                End If
-                If .SeriesCollection.Count >= 2 Then
-                    .SeriesCollection(2).XValues = ws.Range("G40:G" & helperRow)
-                    .SeriesCollection(2).Values = ws.Range("I40:I" & helperRow)
-                End If
-            End With
-        End If
-    End If
-End Sub
-
-' ---------------------------------------------------------------------------
 ' Jednorazowa instalacja / naprawa skoroszytu. Moøna uruchamiaÊ ponownie -
 ' nie kasuje transakcji ani wpisanych, niezapisanych wierszy.
 ' ---------------------------------------------------------------------------
@@ -877,16 +812,18 @@ Public Sub InstallPortfolioTools()
 
     SetupEntrySheet
     SetupQuotesSheet
-    ApplyDashboardFormulas
+    SetupDataSheet
     SetupAnalysisSheet
+    Application.Calculate
+    BuildDashboard
     SetupButtons
 
     Application.Calculate
-    ThisWorkbook.Worksheets(ANALYSIS_SHEET).Activate
+    ThisWorkbook.Worksheets(DASH_SHEET).Activate
     Application.ScreenUpdating = True
     MsgBox "Gotowe." & vbCrLf & vbCrLf & _
            "- nowy arkusz ""Nowe transakcje"" z przyciskiem ZAPISZ TRANSAKCJE," & vbCrLf & _
-           "- dynamiczna lista najwiÍkszych pozycji," & vbCrLf & _
+           "- nowy wyglπd Dashboardu (ciemny motyw, kafelki, wykresy, tabela pozycji z filtrem)," & vbCrLf & _
            "- poprawka cen z Londynu podawanych w pensach," & vbCrLf & _
            "- historia portfela zapisywana przy kaødej aktualizacji kursÛw," & vbCrLf & _
            "- arkusz ""Analiza"": stopa zwrotu skorygowana o wp≥aty i porÛwnanie z benchmarkiem." & vbCrLf & vbCrLf & _
@@ -1038,57 +975,58 @@ Private Function GuessPriceDivisor(ByVal ws As Worksheet, ByVal r As Long) As Lo
 End Function
 
 Private Sub SetupButtons()
-    Dim dash As Worksheet, ledger As Worksheet, entry As Worksheet
-    Dim refreshLeft As Double, refreshTop As Double
-    Dim shp As Shape
+    Dim ledger As Worksheet, entry As Worksheet
 
-    Set dash = ThisWorkbook.Worksheets("Dashboard")
     Set ledger = ThisWorkbook.Worksheets("Transakcje")
     Set entry = ThisWorkbook.Worksheets(ENTRY_SHEET)
 
-    ' Zachowaj po≥oøenie istniejπcego przycisku odúwieøania.
-    refreshLeft = dash.Range("K3").Left
-    refreshTop = dash.Range("K3").Top
-    On Error Resume Next
-    Set shp = dash.Shapes("btnRefreshPortfolio")
-    On Error GoTo 0
-    If Not shp Is Nothing Then
-        refreshLeft = shp.Left
-        refreshTop = shp.Top
-    End If
-
-    AddButton dash, "btnRefreshPortfolio", "AKTUALIZUJ KURSY", refreshLeft, refreshTop, 150, "RefreshPortfolio"
-    AddButton dash, "btnOpenEntryDashboard", "DODAJ TRANSAKCJE", refreshLeft, refreshTop + 36, 150, "OpenTransactionEntry"
-    AddButton dash, "btnOpenAnalysis", "ANALIZA", refreshLeft, refreshTop + 72, 150, "GoToAnalysis"
+    ' Przyciski Dashboardu tworzy BuildDashboard.
     AddButton ThisWorkbook.Worksheets(ANALYSIS_SHEET), "btnRefreshAnalysis", "AKTUALIZUJ KURSY", _
-              ThisWorkbook.Worksheets(ANALYSIS_SHEET).Range("E4").Left, ThisWorkbook.Worksheets(ANALYSIS_SHEET).Range("B1").Top + 2, 150, "RefreshPortfolio"
+              ThisWorkbook.Worksheets(ANALYSIS_SHEET).Range("E4").Left, ThisWorkbook.Worksheets(ANALYSIS_SHEET).Range("B1").Top + 4, 150, "RefreshPortfolio"
+    AddButton ThisWorkbook.Worksheets(ANALYSIS_SHEET), "btnAnalysisToDashboard", "DASHBOARD", _
+              ThisWorkbook.Worksheets(ANALYSIS_SHEET).Range("E4").Left + 160, ThisWorkbook.Worksheets(ANALYSIS_SHEET).Range("B1").Top + 4, 110, "GoToDashboard", False
     AddButton ledger, "btnAddTransaction", "DODAJ TRANSAKCJE", ledger.Range("O2").Left, ledger.Range("O2").Top, 175, "OpenTransactionEntry"
     AddButton entry, "btnSaveTransactions", "ZAPISZ TRANSAKCJE", entry.Range("C1").Left, entry.Range("A1").Top + 2, 175, "SaveNewTransactions"
     AddButton entry, "btnClearTransactions", "WYCZYå∆", entry.Range("C1").Left + 185, entry.Range("A1").Top + 2, 90, "ClearNewTransactions"
 End Sub
 
+' Przycisk: g≥Ûwny (niebieski) albo pomocniczy (ciemny z obramowaniem).
 Private Sub AddButton(ByVal ws As Worksheet, ByVal shapeName As String, ByVal caption As String, _
                       ByVal leftPos As Double, ByVal topPos As Double, ByVal widthPts As Double, _
-                      ByVal macroName As String)
+                      ByVal macroName As String, Optional ByVal primary As Boolean = True)
     Dim shp As Shape
     On Error Resume Next
     ws.Shapes(shapeName).Delete
     On Error GoTo 0
 
-    Set shp = ws.Shapes.AddShape(msoShapeRoundedRectangle, leftPos, topPos, widthPts, 30)
+    Set shp = ws.Shapes.AddShape(msoShapeRoundedRectangle, leftPos, topPos, widthPts, 28)
     With shp
         .Name = shapeName
         .Placement = xlFreeFloating
+        .Shadow.Visible = msoFalse
         .TextFrame.Characters.Text = caption
         .TextFrame.HorizontalAlignment = xlHAlignCenter
         .TextFrame.VerticalAlignment = xlVAlignCenter
         .OnAction = macroName
-        .Fill.ForeColor.RGB = RGB(245, 158, 11)
-        .Line.Visible = msoFalse
-        .TextFrame.Characters.Font.Name = "Arial"
+        .Fill.Solid
+        If primary Then
+            .Fill.ForeColor.RGB = C_ACCENT
+            .Line.Visible = msoFalse
+            .TextFrame.Characters.Font.Color = C_BG
+        Else
+            .Fill.ForeColor.RGB = C_PANEL
+            .Line.Visible = msoTrue
+            .Line.ForeColor.RGB = C_BORDER
+            .TextFrame.Characters.Font.Color = C_FG
+        End If
+        .TextFrame.Characters.Font.Name = THEME_FONT
+        .TextFrame.Characters.Font.Size = 9
         .TextFrame.Characters.Font.Bold = True
-        .TextFrame.Characters.Font.Color = RGB(15, 23, 42)
     End With
+End Sub
+
+Public Sub GoToDashboard()
+    ThisWorkbook.Worksheets(DASH_SHEET).Activate
 End Sub
 
 ' ---------------------------------------------------------------------------
@@ -1096,7 +1034,7 @@ End Sub
 ' Stopa zwrotu skorygowana o wp≥aty (metoda TWR: zwroty miÍdzy kolejnymi
 ' wpisami historii, z wy≥πczeniem wp≥at/wyp≥at, mnoøone ≥aÒcuchowo)
 ' i porÛwnanie z benchmarkiem (domyúlnie VWCE, ceny z STOCKHISTORY).
-' Dane: tabela HistoriaPortfela na Dashboardzie (ukryte kolumny O:Z).
+' Dane: tabela HistoriaPortfela w ukrytym arkuszu Dane.
 ' ---------------------------------------------------------------------------
 Public Sub GoToAnalysis()
     ThisWorkbook.Worksheets(ANALYSIS_SHEET).Activate
@@ -1128,23 +1066,21 @@ Private Sub SetupAnalysisSheet()
         ws.Cells.Clear
         ws.Columns.Hidden = False
     End If
-    ws.Activate
-    ActiveWindow.DisplayGridlines = False
+    ThemeSheet ws
+    ShowSheetLikeApp ws, True
 
     With ws
-        .Cells.Font.Name = "Arial"
-        .Cells.Font.Size = 10
         .Columns("A").ColumnWidth = 2
         .Columns("B").ColumnWidth = 22
         .Columns("C:H").ColumnWidth = 19
 
-        .Range("B1").Value = "ANALIZA PORTFELA"
-        .Range("B1").Font.Size = 16
+        .Range("B1").Value = "Analiza portfela"
+        .Range("B1").Font.Size = 20
         .Range("B1").Font.Bold = True
         .Rows(1).RowHeight = 34
         .Range("B1").VerticalAlignment = xlCenter
         .Range("B2").Value = "Stopa zwrotu skorygowana o wp≥aty (TWR) i porÛwnanie z benchmarkiem. Nowy wpis w historii powstaje przy kaødej aktualizacji kursÛw, raz dziennie."
-        .Range("B2").Font.Color = RGB(71, 85, 105)
+        .Range("B2").Font.Color = C_MUTED
 
         ' Ustawienia
         .Range("B4").Value = "Okres w tabeli"
@@ -1154,7 +1090,7 @@ Private Sub SetupAnalysisSheet()
         .Range("B6").Value = "Waluta benchmarku"
         .Range("C6").Value = "EUR"
         .Range("D5").Value = "np. XETR:VWCE, XNAS:QQQ, XLON:VUSA - zapis jak w STOCKHISTORY"
-        .Range("D5:D6").Font.Color = RGB(100, 116, 139)
+        .Range("D5:D6").Font.Color = C_MUTED
         .Range("D6").Value = "waluta notowaÒ benchmarku (PLN, EUR, USD, GBP)"
         .Range("B7").Value = "Historia od / do"
         .Range("C7").Formula2 = "=IFERROR(MIN(HistoriaPortfela[Data]),"""")"
@@ -1162,8 +1098,8 @@ Private Sub SetupAnalysisSheet()
         .Range("C7:D7").NumberFormat = "dd.mm.yyyy"
         .Range("C7:D7").HorizontalAlignment = xlLeft
         .Range("B4:B7").Font.Bold = True
-        .Range("C4:C6").Interior.Color = RGB(255, 247, 214)
-        .Range("C4:C6").Borders.Color = RGB(226, 232, 240)
+        .Range("C4:C6").Interior.Color = C_INPUT
+        .Range("C4:C6").Borders.Color = C_BORDER
         .Range("Y5:Y7").Value = Application.WorksheetFunction.Transpose(Array("DzieÒ", "Miesiπc", "Rok"))
         .Range("Z5:Z8").Value = Application.WorksheetFunction.Transpose(Array("PLN", "EUR", "USD", "GBP"))
         AddListValidation .Range("C4"), "=$Y$5:$Y$7", True
@@ -1188,8 +1124,8 @@ Private Sub SetupAnalysisSheet()
         Next i
         With .Range("B9:G9")
             .Font.Size = 9
-            .Font.Color = RGB(165, 178, 196)
-            .Interior.Color = RGB(20, 36, 61)
+            .Font.Color = C_MUTED
+            .Interior.Color = C_PANEL
             .WrapText = True
             .VerticalAlignment = xlCenter
         End With
@@ -1203,8 +1139,8 @@ Private Sub SetupAnalysisSheet()
         With .Range("B10:G10")
             .Font.Size = 15
             .Font.Bold = True
-            .Font.Color = RGB(245, 160, 0)
-            .Interior.Color = RGB(20, 36, 61)
+            .Font.Color = C_FG
+            .Interior.Color = C_PANEL
             .HorizontalAlignment = xlLeft
         End With
         .Rows(10).RowHeight = 30
@@ -1218,13 +1154,20 @@ Private Sub SetupAnalysisSheet()
                                         "Zysk w okresie (PLN)", "Stopa zwrotu portfela", "Stopa zwrotu benchmarku", "RÛønica (pkt proc.)")
         With .Range("B34:H34")
             .Font.Bold = True
-            .Font.Color = RGB(255, 255, 255)
-            .Interior.Color = RGB(15, 23, 42)
+            .Font.Color = C_MUTED
+            .Interior.Color = C_PANEL
             .WrapText = True
             .VerticalAlignment = xlCenter
         End With
         .Rows(34).RowHeight = 30
         .Range("B35").Formula2 = PeriodTableFormula()
+        .Range("B35:H2000").Interior.Color = C_PANEL
+        .Range("B35:H2000").Borders(xlInsideHorizontal).Color = C_ROWLINE
+        With .Range("F35:H2000")
+            .FormatConditions.Delete
+            .FormatConditions.Add(Type:=xlCellValue, Operator:=xlGreater, Formula1:="=0").Font.Color = C_OK
+            .FormatConditions.Add(Type:=xlCellValue, Operator:=xlLess, Formula1:="=0").Font.Color = C_BAD
+        End With
         .Range("C35:E2000").NumberFormat = "#,##0.00;[Red]-#,##0.00"
         .Range("F35:H2000").NumberFormat = "0.00%;[Red]-0.00%"
         .Range("B35:B2000").HorizontalAlignment = xlLeft
@@ -1262,8 +1205,8 @@ Private Function SetupHistoryColumns() As ListObject
     Dim specs As Variant
     Dim firstRow As String
 
-    Set ws = ThisWorkbook.Worksheets("Dashboard")
-    Set lo = ws.ListObjects("HistoriaPortfela")
+    Set lo = GetHistoryTable()
+    Set ws = lo.Parent
 
     For i = lo.ListRows.Count To 1 Step -1
         If Len(Trim$(CStr(lo.ListRows(i).Range.Cells(1, 2).Value))) = 0 Then lo.ListRows(i).Delete
@@ -1297,7 +1240,6 @@ Private Function SetupHistoryColumns() As ListObject
             End With
         Next i
     End If
-    lo.Range.EntireColumn.Hidden = True
     Set SetupHistoryColumns = lo
 End Function
 
@@ -1324,16 +1266,16 @@ Private Sub BuildAnalysisCharts(ByVal ws As Worksheet, ByVal lo As ListObject)
     Set co = ws.ChartObjects.Add(leftPos, topPos, w, h)
     co.Name = "WykresWartosciPortfela"
     PrepareLineChart co.Chart, "WartoúÊ portfela, wp≥aty i benchmark (PLN)"
-    AddLineSeries co.Chart, "WartoúÊ portfela", lo, "WartoúÊ portfela", RGB(245, 158, 11)
-    AddLineSeries co.Chart, "Wp≥aty netto", lo, "Wp≥aty netto", RGB(100, 116, 139)
-    AddLineSeries co.Chart, "Gdyby wp≥aty sz≥y w benchmark", lo, "WartoúÊ w benchmarku", RGB(39, 182, 232)
+    AddLineSeries co.Chart, "WartoúÊ portfela", lo, "WartoúÊ portfela", C_ACCENT
+    AddLineSeries co.Chart, "Wp≥aty netto", lo, "Wp≥aty netto", C_MUTED
+    AddLineSeries co.Chart, "Gdyby wp≥aty sz≥y w benchmark", lo, "WartoúÊ w benchmarku", C_ACCENT2
     FormatChartAxes co.Chart, "#,##0"
 
     Set co = ws.ChartObjects.Add(leftPos + w + 12, topPos, ws.Range("F12:H12").Width + 40, h)
     co.Name = "WykresStopyZwrotu"
     PrepareLineChart co.Chart, "Skumulowana stopa zwrotu (TWR) vs benchmark"
-    AddLineSeries co.Chart, "Portfel", lo, "Stopa portfela", RGB(245, 158, 11)
-    AddLineSeries co.Chart, "Benchmark", lo, "Stopa benchmarku", RGB(39, 182, 232)
+    AddLineSeries co.Chart, "Portfel", lo, "Stopa portfela", C_ACCENT
+    AddLineSeries co.Chart, "Benchmark", lo, "Stopa benchmarku", C_ACCENT2
     FormatChartAxes co.Chart, "0.0%"
 End Sub
 
@@ -1342,16 +1284,11 @@ Private Sub PrepareLineChart(ByVal ch As Chart, ByVal title As String)
     Do While ch.SeriesCollection.Count > 0
         ch.SeriesCollection(1).Delete
     Loop
-    ch.PlotVisibleOnly = False          ' dane historii sπ w ukrytych kolumnach
+    ch.PlotVisibleOnly = False          ' dane historii sπ w ukrytym arkuszu
     ch.DisplayBlanksAs = xlInterpolated
+    ch.HasLegend = True
     ch.HasTitle = True
     ch.ChartTitle.Text = title
-    ch.ChartTitle.Font.Size = 12
-    ch.ChartTitle.Font.Bold = True
-    ch.HasLegend = True
-    ch.Legend.Position = xlLegendPositionBottom
-    ch.ChartArea.Font.Name = "Arial"
-    ch.ChartArea.Format.Line.Visible = msoFalse
 End Sub
 
 Private Sub AddLineSeries(ByVal ch As Chart, ByVal seriesName As String, ByVal lo As ListObject, _
@@ -1364,7 +1301,7 @@ Private Sub AddLineSeries(ByVal ch As Chart, ByVal seriesName As String, ByVal l
     s.Format.Line.ForeColor.RGB = colorRGB
     s.Format.Line.Weight = 2.25
     s.MarkerStyle = xlMarkerStyleCircle
-    s.MarkerSize = 4
+    s.MarkerSize = 3
     s.MarkerBackgroundColor = colorRGB
     s.MarkerForegroundColor = colorRGB
 End Sub
@@ -1377,6 +1314,632 @@ Private Sub FormatChartAxes(ByVal ch As Chart, ByVal valueFormat As String)
         .TickLabels.NumberFormat = "dd.mm"
     End With
     ch.Axes(xlValue).TickLabels.NumberFormat = valueFormat
-    ch.Axes(xlValue).HasMajorGridlines = True
-    ch.Axes(xlValue).MajorGridlines.Format.Line.ForeColor.RGB = RGB(226, 232, 240)
+    StyleChartDark ch, ch.ChartTitle.Text
+End Sub
+
+' ---------------------------------------------------------------------------
+' DASHBOARD (ciemny motyw)
+' Liczby sπ liczone w ukrytym arkuszu "Dane"; kafelki to kszta≥ty z tekstem
+' po≥πczonym z komÛrkami, wiÍc odúwieøajπ siÍ same. Kolory zysku/straty
+' i s≥upkÛw ustawia RefreshDashboardVisuals (po kaødej aktualizacji kursÛw).
+' ---------------------------------------------------------------------------
+Public Function GetHistoryTable() As ListObject
+    Dim ws As Worksheet
+    Dim lo As ListObject
+    For Each ws In ThisWorkbook.Worksheets
+        For Each lo In ws.ListObjects
+            If lo.Name = HISTORY_TABLE Then
+                Set GetHistoryTable = lo
+                Exit Function
+            End If
+        Next lo
+    Next ws
+End Function
+
+' Ukryty arkusz "Dane": tabela historii (przeniesiona z Dashboardu) i wszystkie
+' liczby, z ktÛrych korzysta Dashboard.
+Private Sub SetupDataSheet()
+    Dim wsD As Worksheet
+    Dim lo As ListObject
+    Dim vals As Variant
+    Dim nRows As Long
+    Dim specs As Variant
+    Dim i As Long
+
+    On Error Resume Next
+    Set wsD = ThisWorkbook.Worksheets(DATA_SHEET)
+    On Error GoTo 0
+    If wsD Is Nothing Then
+        Set wsD = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count))
+        wsD.Name = DATA_SHEET
+    End If
+
+    Set lo = GetHistoryTable()
+    If lo Is Nothing Then
+        wsD.Range("A1:C1").Value = Array("Data", "WartoúÊ portfela", "Wp≥aty netto")
+        Set lo = wsD.ListObjects.Add(xlSrcRange, wsD.Range("A1:C2"), , xlYes)
+        lo.Name = HISTORY_TABLE
+    ElseIf lo.Parent.Name <> DATA_SHEET Then
+        vals = lo.Range.Resize(, 3).Value
+        nRows = UBound(vals, 1)
+        lo.Delete
+        wsD.Range("A1").Resize(nRows, 3).Value = vals
+        If nRows < 2 Then nRows = 2
+        Set lo = wsD.ListObjects.Add(xlSrcRange, wsD.Range("A1").Resize(nRows, 3), , xlYes)
+        lo.Name = HISTORY_TABLE
+    End If
+    lo.TableStyle = "TableStyleMedium2"
+    If Not lo.DataBodyRange Is Nothing Then
+        lo.ListColumns(1).DataBodyRange.NumberFormat = "dd.mm.yyyy hh:mm"
+        lo.ListColumns(2).DataBodyRange.NumberFormat = "#,##0.00"
+        lo.ListColumns(3).DataBodyRange.NumberFormat = "#,##0.00"
+    End If
+
+    ' Kluczowe liczby: etykieta w AA, formu≥a w AB.
+    specs = Array( _
+        Array(2, "WartoúÊ portfela", "=SUM(Pozycje!$G$5:$G$500)+AB6", "#,##0.00 ""z≥"";-#,##0.00 ""z≥"""), _
+        Array(3, "Wp≥aty netto", "=Transakcje!$R$7", "#,##0.00 ""z≥"";-#,##0.00 ""z≥"""), _
+        Array(4, "Zysk / strata", "=AB2-AB3", "+#,##0.00 ""z≥"";-#,##0.00 ""z≥"";0.00 ""z≥"""), _
+        Array(5, "Stopa zwrotu", "=IF(AB3=0,"""",AB4/AB3)", "+0.0%;-0.0%;0.0%"), _
+        Array(6, "GotÛwka", "=Transakcje!$R$6", "#,##0.00 ""z≥"";-#,##0.00 ""z≥"""), _
+        Array(7, "Udzia≥ gotÛwki", "=IF(AB2=0,"""",AB6/AB2)", "0.0%"), _
+        Array(8, "Poprzedni odczyt - wartoúÊ", "=IFERROR(LET(daty," & HISTORY_TABLE & "[Data],wart," & HISTORY_TABLE & "[WartoúÊ portfela],ileW,ROWS(wart)," & _
+              "pozW,IF(INT(INDEX(daty,ileW))=TODAY(),ileW-1,ileW),IF(pozW<1,"""",INDEX(wart,pozW))),"""")", "#,##0.00 ""z≥"""), _
+        Array(9, "Poprzedni odczyt - data", "=IFERROR(LET(daty," & HISTORY_TABLE & "[Data],ileW,ROWS(daty)," & _
+              "pozW,IF(INT(INDEX(daty,ileW))=TODAY(),ileW-1,ileW),IF(pozW<1,"""",INDEX(daty,pozW))),"""")", "dd.mm.yyyy hh:mm"), _
+        Array(10, "Zmiana od odczytu", "=IFERROR(IF(AB8="""","""",AB2/AB8-1),"""")", ChrW(9650) & " 0.0%;" & ChrW(9660) & " 0.0%;0.0%"), _
+        Array(11, "Kursy z", "=IFERROR(IF(COUNT(" & HISTORY_TABLE & "[Data])=0,"""",MAX(" & HISTORY_TABLE & "[Data])),"""")", "dd.mm.yyyy hh:mm"), _
+        Array(12, "Najlepsza pozycja", "=IFERROR(INDEX(AH2#,1,1),"""")", "General"), _
+        Array(13, "Najs≥absza pozycja", "=IFERROR(INDEX(AH2#,ROWS(AH2#),1),"""")", "General"), _
+        Array(14, "Wynik najs≥abszej", "=IFERROR(INDEX(AH2#,ROWS(AH2#),2),0)", "#,##0.00"), _
+        Array(15, "Liczba pozycji", "=SUMPRODUCT((Pozycje!$B$5:$B$500<>"""")*ISNUMBER(Pozycje!$H$5:$H$500))", "0"), _
+        Array(16, "Zdanie podsumowania", "=""Portfel jest wart ""&FIXED(AB2,2)&"" z≥, czyli ""&IF(AB4>=0,FIXED(AB4,2)&"" z≥ ponad wp≥aty."",FIXED(-AB4,2)&"" z≥ poniøej wp≥at."")" & _
+              "&IF(AB12="""","""","" NajwiÍcej zarobi≥a pozycja ""&AB12&IF(AB14<0,"", najwiÍcej traci ""&AB13&""."","".""))", "General"), _
+        Array(17, "Tekst od odczytu", "=IF(ISNUMBER(AB9),""od odczytu ""&RIGHT(""0""&DAY(AB9),2)&"".""&RIGHT(""0""&MONTH(AB9),2)&"" ""&RIGHT(""0""&HOUR(AB9),2)&"":""&RIGHT(""0""&MINUTE(AB9),2),""brak wczeúniejszego odczytu"")", "General"), _
+        Array(18, "Tekst kursy z", "=IF(ISNUMBER(AB11),""Kursy z ""&RIGHT(""0""&DAY(AB11),2)&"".""&RIGHT(""0""&MONTH(AB11),2)&"".""&YEAR(AB11)&"" ""&RIGHT(""0""&HOUR(AB11),2)&"":""&RIGHT(""0""&MINUTE(AB11),2),""Kursy: brak aktualizacji"")", "General"), _
+        Array(19, "Tekst gotÛwki", "=IFERROR(FIXED(AB7*100,1)&""% portfela w gotÛwce"","""")", "General"))
+    wsD.Range("AA1:AB1").Value = Array("Kluczowe liczby (Dashboard)", "WartoúÊ")
+    For i = LBound(specs) To UBound(specs)
+        wsD.Cells(specs(i)(0), "AA").Value = specs(i)(1)
+        wsD.Cells(specs(i)(0), "AB").NumberFormat = specs(i)(3)
+    Next i
+
+    ' Sk≥ad portfela: klasy (wiersze 2-4) i waluty (wiersze 7-10).
+    wsD.Range("AD1:AF1").Value = Array("Klasa / waluta", "WartoúÊ (PLN)", "Udzia≥")
+    wsD.Range("AD2:AD4").Value = Application.WorksheetFunction.Transpose(Array("Akcje", "ETF-y", "GotÛwka"))
+    wsD.Range("AE2").Formula2 = "=SUMIF(Pozycje!$A$5:$A$500,AD2,Pozycje!$G$5:$G$500)"
+    wsD.Range("AE3").Formula2 = "=SUMIF(Pozycje!$A$5:$A$500,AD3,Pozycje!$G$5:$G$500)"
+    wsD.Range("AE4").Formula2 = "=AB6"
+    wsD.Range("AD6").Value = "Waluta notowania (gotÛwka jako PLN)"
+    wsD.Range("AD7:AD10").Value = Application.WorksheetFunction.Transpose(Array("PLN", "USD", "EUR", "GBP"))
+    For i = 7 To 10
+        wsD.Cells(i, "AE").Formula2 = "=SUMIF(Notowania!$F$7:$F$502,AD" & i & ",Notowania!$H$7:$H$502)" & IIf(i = 7, "+AB6", "")
+    Next i
+    For i = 2 To 10
+        If i <> 5 And i <> 6 Then wsD.Cells(i, "AF").Formula2 = "=IFERROR(AE" & i & "/$AB$2,0)"
+    Next i
+    wsD.Range("AE2:AE10").NumberFormat = "#,##0.00 ""z≥"""
+    wsD.Range("AF2:AF10").NumberFormat = "0.0%"
+
+    ' Zysk/strata kaødej pozycji, posortowane (dla wykresu s≥upkowego).
+    wsD.Range("AH1:AK1").Value = Array("Pozycja", "Zysk / strata (PLN)", "Zwrot", "Etykieta wykresu")
+    wsD.Range("AH2").Formula2 = "=LET(nazwy,Pozycje!$B$5:$B$500,zyski,Pozycje!$H$5:$H$500,zwroty,Pozycje!$I$5:$I$500," & _
+        "maska,(nazwy<>"""")*ISNUMBER(zyski),IF(SUM(maska)=0,"""",SORTBY(HSTACK(FILTER(nazwy,maska),FILTER(zyski,maska),FILTER(zwroty,maska)),FILTER(zyski,maska),-1)))"
+    wsD.Range("AK2").Formula2 = "=IFERROR(INDEX(AH2#,0,1)&""  (""&IF(INDEX(AH2#,0,3)>0,""+"","""")&FIXED(INDEX(AH2#,0,3)*100,1)&""%)"",INDEX(AH2#,0,1))"
+    wsD.Range("AI2:AI500").NumberFormat = "#,##0.00"
+    wsD.Range("AJ2:AJ500").NumberFormat = "0.0%"
+
+    ' Listy wyboru.
+    wsD.Range("AN1").Value = "Filtr grupy"
+    wsD.Range("AN2:AN4").Value = Application.WorksheetFunction.Transpose(Array("Wszystkie", "Akcje", "ETF-y"))
+
+    ' Formu≥y AB wpisywane na koÒcu (korzystajπ z AH2#).
+    For i = LBound(specs) To UBound(specs)
+        wsD.Cells(specs(i)(0), "AB").Formula2 = specs(i)(2)
+    Next i
+
+    wsD.Columns("AA").ColumnWidth = 30
+    wsD.Columns("AB").ColumnWidth = 22
+    wsD.Columns("AD").ColumnWidth = 30
+    wsD.Columns("AH").ColumnWidth = 30
+    wsD.Columns("AK").ColumnWidth = 40
+    wsD.Visible = xlSheetHidden
+End Sub
+
+Private Sub ThemeSheet(ByVal ws As Worksheet)
+    With ws.Cells
+        .Interior.Color = C_BG
+        .Font.Name = THEME_FONT
+        .Font.Size = 10
+        .Font.Color = C_FG
+    End With
+End Sub
+
+Private Sub ShowSheetLikeApp(ByVal ws As Worksheet, ByVal hideHeadings As Boolean)
+    Dim prev As Object
+    Set prev = ActiveSheet
+    ws.Activate
+    ActiveWindow.DisplayGridlines = False
+    ActiveWindow.DisplayHeadings = Not hideHeadings
+    If Not prev Is Nothing Then
+        If prev.Visible = xlSheetVisible Then prev.Activate
+    End If
+End Sub
+
+Private Function AddPanel(ByVal ws As Worksheet, ByVal shapeName As String, ByVal l As Double, ByVal t As Double, _
+                          ByVal w As Double, ByVal h As Double, ByVal fillColor As Long, ByVal lineColor As Long) As Shape
+    Dim shp As Shape
+    Set shp = ws.Shapes.AddShape(msoShapeRoundedRectangle, l, t, w, h)
+    With shp
+        .Name = shapeName
+        .Placement = xlFreeFloating
+        .Adjustments.Item(1) = 10 / IIf(w < h, w, h)
+        .Fill.Visible = msoTrue
+        .Fill.Solid
+        .Fill.ForeColor.RGB = fillColor
+        .Line.Visible = msoTrue
+        .Line.ForeColor.RGB = lineColor
+        .Line.Weight = 0.75
+        .Shadow.Visible = msoFalse
+    End With
+    Set AddPanel = shp
+End Function
+
+Private Function AddText(ByVal ws As Worksheet, ByVal shapeName As String, ByVal txt As String, _
+                         ByVal l As Double, ByVal t As Double, ByVal w As Double, ByVal h As Double, _
+                         ByVal fontSize As Single, ByVal isBold As Boolean, ByVal fontColor As Long, _
+                         Optional ByVal linkTo As String = "", Optional ByVal align As Long = 1) As Shape
+    Dim shp As Shape
+    Set shp = ws.Shapes.AddTextbox(msoTextOrientationHorizontal, l, t, w, h)
+    shp.Name = shapeName
+    shp.Placement = xlFreeFloating
+    shp.Fill.Visible = msoFalse
+    shp.Line.Visible = msoFalse
+    If Len(linkTo) > 0 Then
+        shp.DrawingObject.Formula = linkTo
+    Else
+        shp.TextFrame2.TextRange.Text = txt
+    End If
+    With shp.TextFrame2
+        .MarginLeft = 0
+        .MarginRight = 0
+        .MarginTop = 0
+        .MarginBottom = 0
+        .WordWrap = msoTrue
+        .AutoSize = msoAutoSizeNone
+        .VerticalAnchor = msoAnchorMiddle
+        .TextRange.ParagraphFormat.Alignment = align    ' 1 = do lewej, 3 = do prawej
+        With .TextRange.Font
+            .Name = THEME_FONT
+            .Size = fontSize
+            .Bold = IIf(isBold, msoTrue, msoFalse)
+            .Fill.ForeColor.RGB = fontColor
+        End With
+    End With
+    Set AddText = shp
+End Function
+
+Private Sub StyleChartDark(ByVal ch As Chart, ByVal title As String)
+    On Error Resume Next
+    With ch
+        .ChartArea.Format.Fill.Visible = msoTrue
+        .ChartArea.Format.Fill.Solid
+        .ChartArea.Format.Fill.ForeColor.RGB = C_PANEL
+        .ChartArea.Format.Line.Visible = msoTrue
+        .ChartArea.Format.Line.ForeColor.RGB = C_BORDER
+        .ChartArea.Format.Line.Weight = 0.75
+        .ChartArea.RoundedCorners = True
+        .ChartArea.Font.Name = THEME_FONT
+        .ChartArea.Font.Size = 9
+        .ChartArea.Font.Color = C_MUTED
+        .PlotArea.Format.Fill.Visible = msoFalse
+        .HasTitle = True
+        .ChartTitle.Text = title
+        .ChartTitle.Font.Size = 11
+        .ChartTitle.Font.Bold = True
+        .ChartTitle.Font.Color = C_FG
+        .ChartTitle.Position = xlChartElementPositionAutomatic
+        .ChartTitle.Left = 12
+        If .HasLegend Then
+            .Legend.Position = xlLegendPositionTop
+            .Legend.Font.Color = C_MUTED
+        End If
+        .Axes(xlValue).HasMajorGridlines = True
+        .Axes(xlValue).MajorGridlines.Format.Line.ForeColor.RGB = C_BORDER
+        .Axes(xlValue).Format.Line.Visible = msoFalse
+        .Axes(xlValue).TickLabels.Font.Color = C_MUTED
+        .Axes(xlCategory).Format.Line.ForeColor.RGB = C_BORDER
+        .Axes(xlCategory).TickLabels.Font.Color = C_MUTED
+        .Axes(xlCategory).MajorTickMark = xlNone
+    End With
+End Sub
+
+' Pasek 100% (jedna kategoria, jedna seria na kaødπ czÍúÊ).
+Private Sub AddStackBar(ByVal ws As Worksheet, ByVal chartName As String, ByVal l As Double, ByVal t As Double, _
+                        ByVal w As Double, ByVal valueCells As Range, ByVal partNames As Variant, ByVal colors As Variant)
+    Dim co As ChartObject
+    Dim s As Series
+    Dim i As Long
+
+    Set co = ws.ChartObjects.Add(l, t, w, 14)
+    co.Name = chartName
+    co.Placement = xlFreeFloating
+    With co.Chart
+        Do While .SeriesCollection.Count > 0
+            .SeriesCollection(1).Delete
+        Loop
+        For i = 1 To valueCells.Cells.Count
+            Set s = .SeriesCollection.NewSeries
+            s.Name = partNames(i - 1)
+            s.Values = valueCells.Cells(i)
+            s.Format.Fill.ForeColor.RGB = colors(i - 1)
+            s.Format.Line.Visible = msoFalse
+        Next i
+        .ChartType = xlBarStacked100
+        .HasTitle = False
+        .HasLegend = False
+        .ChartGroups(1).GapWidth = 0
+        .ChartGroups(1).Overlap = 100
+        On Error Resume Next
+        .Axes(xlValue).HasMajorGridlines = False
+        .HasAxis(xlCategory, xlPrimary) = False
+        .HasAxis(xlValue, xlPrimary) = False
+        On Error GoTo 0
+        .ChartArea.Format.Fill.Visible = msoTrue
+        .ChartArea.Format.Fill.ForeColor.RGB = C_TRACK
+        .ChartArea.Format.Line.Visible = msoFalse
+        .PlotArea.Format.Fill.Visible = msoFalse
+        .PlotArea.InsideLeft = 0
+        .PlotArea.InsideTop = 0
+        .PlotArea.InsideWidth = w
+        .PlotArea.InsideHeight = 14
+    End With
+End Sub
+
+' Wiersz listy: kolorowy kwadrat, nazwa, wartoúÊ, udzia≥.
+Private Sub AddLegendRow(ByVal ws As Worksheet, ByVal key As String, ByVal l As Double, ByVal t As Double, ByVal w As Double, _
+                         ByVal label As String, ByVal colorRGB As Long, ByVal valueRef As String, ByVal shareRef As String)
+    Dim sw As Shape
+    Set sw = ws.Shapes.AddShape(msoShapeRoundedRectangle, l, t + 4, 9, 9)
+    sw.Name = "sw" & key
+    sw.Fill.ForeColor.RGB = colorRGB
+    sw.Line.Visible = msoFalse
+    sw.Placement = xlFreeFloating
+    AddText ws, "lbl" & key, label, l + 16, t, w * 0.42, 17, 10, False, C_FG
+    AddText ws, "val" & key, "", l + 16 + w * 0.42, t, w * 0.36, 17, 10, False, C_FG, valueRef, 3
+    AddText ws, "pct" & key, "", l + w - 52, t, 52, 17, 10, False, C_MUTED, shareRef, 3
+End Sub
+
+Public Sub BuildDashboard()
+    Dim ws As Worksheet, wsD As Worksheet
+    Dim lo As ListObject
+    Dim co As ChartObject
+    Dim s As Series
+    Dim x0 As Double, totalW As Double, y As Double, gap As Double
+    Dim cardW As Double, cardL As Double, lineW As Double, compL As Double, compW As Double
+    Dim plTop As Double, plH As Double, yT As Double
+    Dim i As Long, n As Long, r As Long
+    Dim tblRow As Long, ctrlRow As Long, hdrRow As Long, dataRow As Long, lastRow As Long
+    Dim kpiLabels As Variant, kpiRefs As Variant, kpiSubs As Variant
+    Dim spill As String
+
+    Set ws = ThisWorkbook.Worksheets(DASH_SHEET)
+    Set wsD = ThisWorkbook.Worksheets(DATA_SHEET)
+    Set lo = GetHistoryTable()
+    Application.Calculate
+    n = 1
+    If IsNumeric(wsD.Range("AB15").Value) Then n = CLng(wsD.Range("AB15").Value)
+    If n < 1 Then n = 1
+
+    ' 1) Czyszczenie arkusza.
+    Do While ws.ChartObjects.Count > 0
+        ws.ChartObjects(1).Delete
+    Loop
+    Do While ws.Shapes.Count > 0
+        ws.Shapes(1).Delete
+    Loop
+    On Error Resume Next
+    ws.Cells.Validation.Delete
+    ws.Cells.FormatConditions.Delete
+    On Error GoTo 0
+    ws.Cells.Clear
+    ws.Columns.Hidden = False
+    ws.Rows.Hidden = False
+    ws.Cells.RowHeight = 18
+    ThemeSheet ws
+    ws.Columns("A").ColumnWidth = 3
+    ws.Columns("B").ColumnWidth = 30
+    ws.Columns("C:L").ColumnWidth = 12.5
+    ws.Columns("M").ColumnWidth = 3
+    ShowSheetLikeApp ws, True
+
+    x0 = ws.Range("B1").Left
+    totalW = ws.Range("B1:L1").Width
+    gap = 12
+
+    ' 2) Nag≥Ûwek.
+    AddText ws, "txtEyebrow", "M”J PORTFEL", x0, 12, 200, 14, 8.5, True, C_ACCENT
+    AddText ws, "txtTitle", "Portfel inwestycyjny", x0, 26, 420, 32, 22, False, C_FG
+    AddText ws, "txtLede", "", x0, 62, totalW - 230, 34, 10.5, False, C_MUTED, "=" & DATA_SHEET & "!$AB$16"
+    AddPanel ws, "pnlStamp", x0 + totalW - 205, 14, 205, 24, C_PANEL, C_BORDER
+    With ws.Shapes.AddShape(msoShapeOval, x0 + totalW - 193, 22.5, 7, 7)
+        .Name = "dotStamp"
+        .Fill.ForeColor.RGB = C_OK
+        .Line.Visible = msoFalse
+        .Placement = xlFreeFloating
+    End With
+    AddText ws, "txtStamp", "", x0 + totalW - 180, 14, 172, 24, 9, False, C_MUTED, "=" & DATA_SHEET & "!$AB$18"
+
+    AddButton ws, "btnRefreshPortfolio", "AKTUALIZUJ KURSY", x0, 102, 150, "RefreshPortfolio", True
+    AddButton ws, "btnOpenEntryDashboard", "DODAJ TRANSAKCJE", x0 + 160, 102, 150, "OpenTransactionEntry", False
+    AddButton ws, "btnOpenAnalysis", "ANALIZA", x0 + 320, 102, 110, "GoToAnalysis", False
+
+    ' 3) Kafelki z kluczowymi liczbami.
+    y = 146
+    cardW = (totalW - 4 * gap) / 5
+    kpiLabels = Array("WartoúÊ portfela", "Zysk / strata", "Stopa zwrotu", "Wp≥aty netto", "Wolne úrodki")
+    kpiRefs = Array("$AB$2", "$AB$4", "$AB$5", "$AB$3", "$AB$6")
+    kpiSubs = Array("", "wartoúÊ minus wp≥aty netto", "zysk " & ChrW(247) & " wp≥aty netto", "wp≥aty minus wyp≥aty", "")
+    For i = 0 To 4
+        cardL = x0 + i * (cardW + gap)
+        If i = 0 Then
+            AddPanel ws, "kpiCard" & i, cardL, y, cardW, 90, C_HERO, C_HEROLINE
+        Else
+            AddPanel ws, "kpiCard" & i, cardL, y, cardW, 90, C_PANEL, C_BORDER
+        End If
+        AddText ws, "kpiLbl" & i, CStr(kpiLabels(i)), cardL + 14, y + 12, cardW - 28, 16, 9, False, C_MUTED
+        AddText ws, "kpiVal" & i, "", cardL + 14, y + 30, cardW - 20, 30, 17, False, C_FG, "=" & DATA_SHEET & "!" & kpiRefs(i)
+        Select Case i
+            Case 0
+                AddText ws, "kpiChip", "", cardL + 14, y + 64, 60, 16, 9, True, C_MUTED, "=" & DATA_SHEET & "!$AB$10"
+                AddText ws, "kpiSub0", "", cardL + 76, y + 64, cardW - 90, 16, 9, False, C_MUTED, "=" & DATA_SHEET & "!$AB$17"
+            Case 4
+                AddText ws, "kpiSub4", "", cardL + 14, y + 64, cardW - 28, 16, 9, False, C_MUTED, "=" & DATA_SHEET & "!$AB$19"
+            Case Else
+                AddText ws, "kpiSub" & i, CStr(kpiSubs(i)), cardL + 14, y + 64, cardW - 28, 16, 9, False, C_MUTED
+        End Select
+    Next i
+
+    ' 4) Wykres wartoúci i sk≥ad portfela.
+    y = y + 90 + gap + 4
+    lineW = (totalW - gap) * 0.62
+    compL = x0 + lineW + gap
+    compW = totalW - lineW - gap
+
+    If Not lo Is Nothing Then
+        If Not lo.DataBodyRange Is Nothing Then
+            Set co = ws.ChartObjects.Add(x0, y, lineW, 300)
+            co.Name = "WykresWartosci"
+            co.Placement = xlFreeFloating
+            With co.Chart
+                Do While .SeriesCollection.Count > 0
+                    .SeriesCollection(1).Delete
+                Loop
+                Set s = .SeriesCollection.NewSeries
+                s.Name = "WartoúÊ"
+                s.XValues = lo.ListColumns("Data").DataBodyRange
+                s.Values = lo.ListColumns("WartoúÊ portfela").DataBodyRange
+                s.Format.Line.ForeColor.RGB = C_ACCENT
+                s.Format.Line.Weight = 2.25
+                s.MarkerStyle = xlMarkerStyleNone
+                Set s = .SeriesCollection.NewSeries
+                s.Name = "Wp≥aty netto"
+                s.XValues = lo.ListColumns("Data").DataBodyRange
+                s.Values = lo.ListColumns("Wp≥aty netto").DataBodyRange
+                s.Format.Line.ForeColor.RGB = C_MUTED
+                s.Format.Line.Weight = 1.5
+                s.Format.Line.DashStyle = msoLineDash
+                s.MarkerStyle = xlMarkerStyleNone
+                .ChartType = xlLine
+                .PlotVisibleOnly = False
+                .DisplayBlanksAs = xlInterpolated
+                .HasLegend = True
+                StyleChartDark co.Chart, "WartoúÊ portfela a wp≥aty"
+                On Error Resume Next
+                .Axes(xlCategory).CategoryType = xlTimeScale
+                .Axes(xlCategory).BaseUnit = xlDays
+                .Axes(xlCategory).TickLabels.NumberFormat = "dd.mm"
+                .Axes(xlValue).TickLabels.NumberFormat = "#,##0"
+                On Error GoTo 0
+            End With
+        End If
+    End If
+
+    AddPanel ws, "pnlSklad", compL, y, compW, 300, C_PANEL, C_BORDER
+    AddText ws, "txtSklad", "Sk≥ad portfela", compL + 16, y + 12, compW - 32, 20, 11, True, C_FG
+    AddText ws, "txtSkladKlasa", "WED£UG KLASY", compL + 16, y + 42, compW - 32, 14, 8, False, C_MUTED
+    AddStackBar ws, "barKlasa", compL + 16, y + 60, compW - 32, wsD.Range("AE2:AE4"), _
+                Array("Akcje", "ETF-y", "GotÛwka"), Array(C_ACCENT, C_ACCENT2, C_MUTED)
+    AddLegendRow ws, "Akcje", compL + 16, y + 82, compW - 32, "Akcje", C_ACCENT, "=" & DATA_SHEET & "!$AE$2", "=" & DATA_SHEET & "!$AF$2"
+    AddLegendRow ws, "Etf", compL + 16, y + 101, compW - 32, "ETF-y", C_ACCENT2, "=" & DATA_SHEET & "!$AE$3", "=" & DATA_SHEET & "!$AF$3"
+    AddLegendRow ws, "Gotowka", compL + 16, y + 120, compW - 32, "GotÛwka", C_MUTED, "=" & DATA_SHEET & "!$AE$4", "=" & DATA_SHEET & "!$AF$4"
+
+    AddText ws, "txtSkladWaluta", "WED£UG WALUTY NOTOWANIA", compL + 16, y + 154, compW - 32, 14, 8, False, C_MUTED
+    AddStackBar ws, "barWaluta", compL + 16, y + 172, compW - 32, wsD.Range("AE7:AE10"), _
+                Array("PLN", "USD", "EUR", "GBP"), Array(C_WARN, C_ACCENT, C_ACCENT2, C_OK)
+    AddLegendRow ws, "PLN", compL + 16, y + 194, compW - 32, "PLN (z gotÛwkπ)", C_WARN, "=" & DATA_SHEET & "!$AE$7", "=" & DATA_SHEET & "!$AF$7"
+    AddLegendRow ws, "USD", compL + 16, y + 213, compW - 32, "USD", C_ACCENT, "=" & DATA_SHEET & "!$AE$8", "=" & DATA_SHEET & "!$AF$8"
+    AddLegendRow ws, "EUR", compL + 16, y + 232, compW - 32, "EUR", C_ACCENT2, "=" & DATA_SHEET & "!$AE$9", "=" & DATA_SHEET & "!$AF$9"
+    AddLegendRow ws, "GBP", compL + 16, y + 251, compW - 32, "GBP", C_OK, "=" & DATA_SHEET & "!$AE$10", "=" & DATA_SHEET & "!$AF$10"
+
+    ' 5) Zysk i strata kaødej pozycji (posortowane, kolory ustawia RefreshDashboardVisuals).
+    plTop = y + 300 + gap + 4
+    plH = 60 + n * 17
+    Set co = ws.ChartObjects.Add(x0, plTop, totalW, plH)
+    co.Name = "WykresZyskuPozycji"
+    co.Placement = xlFreeFloating
+    With co.Chart
+        Do While .SeriesCollection.Count > 0
+            .SeriesCollection(1).Delete
+        Loop
+        Set s = .SeriesCollection.NewSeries
+        s.Name = "Zysk / strata (PLN)"
+        s.XValues = wsD.Range("AK2").Resize(n, 1)
+        s.Values = wsD.Range("AI2").Resize(n, 1)
+        s.Format.Fill.ForeColor.RGB = C_OK
+        s.Format.Line.Visible = msoFalse
+        .ChartType = xlBarClustered
+        .HasLegend = False
+        .ChartGroups(1).GapWidth = 45
+        StyleChartDark co.Chart, "Zysk i strata na kaødej pozycji (PLN, w nawiasie % od ceny nabycia)"
+        On Error Resume Next
+        .Axes(xlCategory).ReversePlotOrder = True
+        .Axes(xlCategory).TickLabelPosition = xlTickLabelPositionLow
+        .Axes(xlCategory).TickLabels.Font.Color = C_FG
+        .Axes(xlValue).TickLabels.NumberFormat = "#,##0"
+        s.HasDataLabels = True
+        s.DataLabels.ShowValue = True
+        s.DataLabels.NumberFormat = "+#,##0 ""z≥"";-#,##0 ""z≥"";0 ""z≥"""
+        s.DataLabels.Position = xlLabelPositionOutsideEnd
+        s.DataLabels.Font.Color = C_FG
+        s.DataLabels.Font.Size = 8.5
+        On Error GoTo 0
+    End With
+
+    ' 6) Tabela pozycji (komÛrki pod wykresami).
+    yT = plTop + plH + 22
+    tblRow = 1
+    Do While ws.Rows(tblRow).Top < yT
+        tblRow = tblRow + 1
+    Loop
+    ctrlRow = tblRow + 1
+    hdrRow = tblRow + 3
+    dataRow = tblRow + 4
+    lastRow = dataRow + n + 5
+
+    With ws.Cells(tblRow, "B")
+        .Value = "Pozycje"
+        .Font.Size = 12
+        .Font.Bold = True
+    End With
+    ws.Rows(tblRow).RowHeight = 24
+    ws.Cells(tblRow, "C").Formula2 = "=IFERROR(IF(ISNUMBER(H" & dataRow & "),ROWS(B" & dataRow & "#)&"" z ""&" & DATA_SHEET & "!$AB$15&"" pozycji"",""0 pozycji""),"""")"
+    ws.Cells(tblRow, "C").Font.Color = C_MUTED
+
+    ws.Cells(ctrlRow, "B").Value = "Wszystkie"
+    ws.Cells(ctrlRow, "C").Value = "Szukaj:"
+    ws.Cells(ctrlRow, "C").HorizontalAlignment = xlRight
+    ws.Cells(ctrlRow, "C").Font.Color = C_MUTED
+    ws.Range(ws.Cells(ctrlRow, "D"), ws.Cells(ctrlRow, "E")).Merge
+    ws.Cells(ctrlRow, "F").Value = "fragment nazwy lub tickera; pole puste = wszystkie"
+    ws.Cells(ctrlRow, "F").Font.Color = C_MUTED
+    ws.Cells(ctrlRow, "F").Font.Size = 9
+    With ws.Range(ws.Cells(ctrlRow, "B"), ws.Cells(ctrlRow, "B"))
+        .Interior.Color = C_INPUT
+        .Borders.Color = C_BORDER
+        .Validation.Delete
+        .Validation.Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, Formula1:="=" & DATA_SHEET & "!$AN$2:$AN$4"
+    End With
+    With ws.Range(ws.Cells(ctrlRow, "D"), ws.Cells(ctrlRow, "E"))
+        .Interior.Color = C_INPUT
+        .Borders.Color = C_BORDER
+    End With
+    ws.Rows(ctrlRow).RowHeight = 22
+
+    ws.Range(ws.Cells(hdrRow, "B"), ws.Cells(hdrRow, "L")).Value = Array("SpÛ≥ka / ETF", "Ticker", "Grupa", "Liczba", "Cena (PLN)", _
+        "Koszt (PLN)", "WartoúÊ (PLN)", "Zysk / strata", "Zwrot", "Udzia≥", "Dywidenda")
+    With ws.Range(ws.Cells(hdrRow, "B"), ws.Cells(hdrRow, "L"))
+        .Font.Color = C_MUTED
+        .Font.Size = 9
+        .Interior.Color = C_PANEL
+        .HorizontalAlignment = xlRight
+        .Borders(xlEdgeBottom).Color = C_BORDER
+    End With
+    ws.Range(ws.Cells(hdrRow, "B"), ws.Cells(hdrRow, "D")).HorizontalAlignment = xlLeft
+    ws.Cells(hdrRow, "L").HorizontalAlignment = xlLeft
+    ws.Rows(hdrRow).RowHeight = 24
+
+    spill = "=LET(nazwy,Pozycje!$B$5:$B$500,grupy,Pozycje!$A$5:$A$500,dywid,Pozycje!$C$5:$C$500,liczby,Pozycje!$D$5:$D$500," & _
+            "koszty,Pozycje!$F$5:$F$500,wartosci,Pozycje!$G$5:$G$500,zyski,Pozycje!$H$5:$H$500,zwroty,Pozycje!$I$5:$I$500," & _
+            "tickery,Notowania!$B$7:$B$502,ceny,Notowania!$E$7:$E$502," & _
+            "krotki,IFERROR(MID(tickery,FIND("":"",tickery)+1,20),tickery)," & _
+            "wybor,$B$" & ctrlRow & ",szukaj,TRIM($D$" & ctrlRow & ")," & _
+            "maska,(nazwy<>"""")*IF(OR(wybor="""",wybor=""Wszystkie""),1,grupy=wybor)*IF(szukaj="""",1,ISNUMBER(SEARCH(szukaj,nazwy&"" ""&krotki)))," & _
+            "udzialy,IFERROR(wartosci/" & DATA_SHEET & "!$AB$2,0),dywTxt,IF(dywid=""Tak"",""Wyp≥aca"",dywid)," & _
+            "IF(SUM(maska)=0,""Brak pozycji dla wybranego filtra""," & _
+            "SORTBY(FILTER(HSTACK(nazwy,krotki,grupy,liczby,ceny,koszty,wartosci,zyski,zwroty,udzialy,dywTxt),maska)," & _
+            "FILTER(IF(ISNUMBER(wartosci),wartosci,0),maska),-1)))"
+    ws.Cells(dataRow, "B").Formula2 = spill
+
+    With ws.Range(ws.Cells(dataRow, "B"), ws.Cells(lastRow, "L"))
+        .Interior.Color = C_PANEL
+        .Borders(xlInsideHorizontal).Color = C_ROWLINE
+        .Borders(xlEdgeBottom).Color = C_ROWLINE
+        .HorizontalAlignment = xlRight
+        .RowHeight = 22
+        .VerticalAlignment = xlCenter
+    End With
+    ws.Range(ws.Cells(dataRow, "B"), ws.Cells(lastRow, "D")).HorizontalAlignment = xlLeft
+    ws.Range(ws.Cells(dataRow, "L"), ws.Cells(lastRow, "L")).HorizontalAlignment = xlLeft
+    ws.Range(ws.Cells(dataRow, "C"), ws.Cells(lastRow, "D")).Font.Color = C_MUTED
+    ws.Range(ws.Cells(dataRow, "L"), ws.Cells(lastRow, "L")).Font.Color = C_MUTED
+    ws.Range(ws.Cells(dataRow, "E"), ws.Cells(lastRow, "E")).NumberFormat = "0.0000"
+    ws.Range(ws.Cells(dataRow, "F"), ws.Cells(lastRow, "H")).NumberFormat = "#,##0.00"
+    ws.Range(ws.Cells(dataRow, "I"), ws.Cells(lastRow, "I")).NumberFormat = "+#,##0.00;-#,##0.00;0.00"
+    ws.Range(ws.Cells(dataRow, "J"), ws.Cells(lastRow, "J")).NumberFormat = "+0.0%;-0.0%;0.0%"
+    ws.Range(ws.Cells(dataRow, "K"), ws.Cells(lastRow, "K")).NumberFormat = "0.0%"
+
+    With ws.Range(ws.Cells(dataRow, "I"), ws.Cells(lastRow, "J"))
+        .FormatConditions.Delete
+        .FormatConditions.Add(Type:=xlCellValue, Operator:=xlGreater, Formula1:="=0").Font.Color = C_OK
+        .FormatConditions.Add(Type:=xlCellValue, Operator:=xlLess, Formula1:="=0").Font.Color = C_BAD
+    End With
+    With ws.Range(ws.Cells(dataRow, "K"), ws.Cells(lastRow, "K")).FormatConditions.AddDatabar
+        .BarColor.Color = C_ACCENT
+        .BarFillType = xlDataBarFillSolid
+        .ShowValue = True
+    End With
+
+    With ws.Cells(lastRow + 2, "B")
+        .Value = "èrÛd≥o: arkusze Pozycje, Notowania i Transakcje  ∑  kursy Yahoo mogπ byÊ opÛünione  ∑  wszystkie wartoúci w PLN"
+        .Font.Size = 9
+        .Font.Color = C_MUTED
+    End With
+
+    RefreshDashboardVisuals
+End Sub
+
+' Kolory zaleøne od znaku (zysk / strata) - wywo≥ywane po kaødej aktualizacji.
+Public Sub RefreshDashboardVisuals()
+    Dim ws As Worksheet, wsD As Worksheet
+    Dim co As ChartObject
+    Dim s As Series
+    Dim vals As Variant
+    Dim i As Long
+
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(DASH_SHEET)
+    Set wsD = ThisWorkbook.Worksheets(DATA_SHEET)
+    If ws Is Nothing Or wsD Is Nothing Then Exit Sub
+
+    SetSignColor ws, "kpiVal1", wsD.Range("AB4").Value, C_FG
+    SetSignColor ws, "kpiVal2", wsD.Range("AB5").Value, C_FG
+    SetSignColor ws, "kpiChip", wsD.Range("AB10").Value, C_MUTED
+
+    Set co = ws.ChartObjects("WykresZyskuPozycji")
+    If Not co Is Nothing Then
+        Set s = co.Chart.SeriesCollection(1)
+        vals = s.Values
+        For i = LBound(vals) To UBound(vals)
+            If IsNumeric(vals(i)) Then
+                If vals(i) < 0 Then
+                    s.Points(i - LBound(vals) + 1).Format.Fill.ForeColor.RGB = C_BAD
+                Else
+                    s.Points(i - LBound(vals) + 1).Format.Fill.ForeColor.RGB = C_OK
+                End If
+            End If
+        Next i
+    End If
+End Sub
+
+Private Sub SetSignColor(ByVal ws As Worksheet, ByVal shapeName As String, ByVal v As Variant, ByVal neutralColor As Long)
+    Dim c As Long
+    c = neutralColor
+    If Not IsError(v) Then
+        If IsNumeric(v) And Not IsEmpty(v) And VarType(v) <> vbString Then
+            If v > 0 Then c = C_OK
+            If v < 0 Then c = C_BAD
+        End If
+    End If
+    ws.Shapes(shapeName).TextFrame2.TextRange.Font.Fill.ForeColor.RGB = c
 End Sub

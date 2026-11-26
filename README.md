@@ -18,12 +18,13 @@ ale pobrany plik (przycisk *Download raw file*) jest poprawny.
 
 ## Arkusze skoroszytu
 
-- **Dashboard**: wartość portfela, wpłaty netto, wynik, skład portfela, wykres zysków/strat spółek, największe pozycje, historia wartości (ukryta tabela `HistoriaPortfela`).
+- **Dashboard** (ciemny motyw): kafelki z wartością portfela, zyskiem, stopą zwrotu, wpłatami i gotówką; wykres wartości na tle wpłat; skład portfela według klasy i waluty; zysk/strata każdej pozycji; tabela pozycji z filtrem (Wszystkie / Akcje / ETF-y) i wyszukiwarką.
 - **Analiza**: stopa zwrotu skorygowana o wpłaty (TWR), porównanie z benchmarkiem (domyślnie VWCE), wykresy i tabela wyników w okresach (dzień / miesiąc / rok).
 - **Nowe transakcje**: wpisywanie operacji (kupno, sprzedaż, wpłata, wypłata, dywidenda) i przycisk ZAPISZ TRANSAKCJE.
 - **Transakcje**: rejestr wszystkich operacji; liczy jednostki, koszt średni, gotówkę i zrealizowany wynik.
 - **Notowania**: kursy instrumentów i walut (Yahoo, potem `STOCKHISTORY`, potem cena zapasowa).
 - **Pozycje** (ukryty): stan każdej pozycji.
+- **Dane** (ukryty): tabela `HistoriaPortfela` i liczby, z których korzysta Dashboard.
 
 ## Instalacja / aktualizacja makr
 
@@ -35,7 +36,9 @@ ale pobrany plik (przycisk *Download raw file*) jest poprawny.
 6. W Excelu **Alt+F8** → `InstallPortfolioTools` → *Uruchom*.
 7. Zapisz plik (**Ctrl+S**).
 
-Instalator można uruchamiać ponownie: nie usuwa transakcji.
+Instalator można uruchamiać ponownie: nie usuwa transakcji ani historii. Dashboard i Analiza są
+budowane od nowa, a przy pierwszym uruchomieniu tabela historii jest przenoszona z Dashboardu
+do ukrytego arkusza Dane.
 
 ## Wpisywanie transakcji
 
@@ -58,7 +61,7 @@ Arkusz **Nowe transakcje**, jeden wiersz = jedna operacja, potem **ZAPISZ TRANSA
 - Źródło: nieoficjalne API Yahoo Finance (kursy mogą być opóźnione). Gdy Yahoo nie odpowie,
   używany jest kurs zamknięcia z `STOCKHISTORY`, a potem cena zapasowa.
 - Spółki z Londynu notowane w pensach (np. National Grid) są przeliczane na GBP.
-- Po każdej udanej aktualizacji do tabeli `HistoriaPortfela` na Dashboardzie dopisywany jest wpis (jeden dziennie).
+- Po każdej udanej aktualizacji do tabeli `HistoriaPortfela` (arkusz Dane) dopisywany jest wpis (jeden dziennie).
 
 ## Analiza
 
