@@ -1,0 +1,5 @@
+# Skoroszyty z danymi portfela nie trafiają do publicznego repozytorium.
+*.xlsm
+*.xlsx
+*.xls
+~$*

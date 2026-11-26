@@ -1,0 +1,6 @@
+# Moduły VBA muszą zostać w kodowaniu Windows-1250 i z końcami linii CRLF,
+# inaczej edytor VBA pokaże zepsute polskie znaki ("SprzedaĹĽ").
+*.bas binary
+*.cls binary
+*.frm binary
+*.frx binary
