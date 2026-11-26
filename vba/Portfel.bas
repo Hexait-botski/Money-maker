@@ -25,6 +25,7 @@ Public Const ANALYSIS_SHEET As String = "Analiza"
 Public Const DASH_SHEET As String = "Dashboard"
 Public Const DATA_SHEET As String = "Dane"
 Public Const HISTORY_TABLE As String = "HistoriaPortfela"
+Public Const DIVIDEND_SHEET As String = "Dywidendy"
 
 ' Kolory motywu (ciemny).
 Private Const C_BG As Long = 1182986        ' #0a0d12 t³o
@@ -430,7 +431,10 @@ Public Sub SaveNewTransactions()
         WriteLedgerRow wsT, ledgerRow, txs(i)
     Next i
 
-    If newCount > 0 Then BuildDashboard
+    If newCount > 0 Then
+        BuildDashboard
+        BuildDividendsSheet
+    End If
 
     For i = 1 To n
         wsE.Range(wsE.Cells(txs(i).EntryRow, COL_TYPE), wsE.Cells(txs(i).EntryRow, COL_LAST_INPUT)).ClearContents
@@ -816,6 +820,7 @@ Public Sub InstallPortfolioTools()
     SetupAnalysisSheet
     Application.Calculate
     BuildDashboard
+    BuildDividendsSheet
     SetupButtons
 
     Application.Calculate
@@ -826,7 +831,8 @@ Public Sub InstallPortfolioTools()
            "- nowy wygl¹d Dashboardu (ciemny motyw, kafelki, wykresy, tabela pozycji z filtrem)," & vbCrLf & _
            "- poprawka cen z Londynu podawanych w pensach," & vbCrLf & _
            "- historia portfela zapisywana przy ka¿dej aktualizacji kursów," & vbCrLf & _
-           "- arkusz ""Analiza"": stopa zwrotu skorygowana o wp³aty i porównanie z benchmarkiem." & vbCrLf & vbCrLf & _
+           "- arkusz ""Analiza"": stopa zwrotu skorygowana o wp³aty i porównanie z benchmarkiem," & vbCrLf & _
+           "- arkusz ""Dywidendy"" z szacunkiem podatku Belki." & vbCrLf & vbCrLf & _
            "Zapisz plik (Ctrl+S).", vbInformation, "Portfel inwestycyjny"
     Exit Sub
 
@@ -985,6 +991,8 @@ Private Sub SetupButtons()
               ThisWorkbook.Worksheets(ANALYSIS_SHEET).Range("E4").Left, ThisWorkbook.Worksheets(ANALYSIS_SHEET).Range("B1").Top + 4, 150, "RefreshPortfolio"
     AddButton ThisWorkbook.Worksheets(ANALYSIS_SHEET), "btnAnalysisToDashboard", "DASHBOARD", _
               ThisWorkbook.Worksheets(ANALYSIS_SHEET).Range("E4").Left + 160, ThisWorkbook.Worksheets(ANALYSIS_SHEET).Range("B1").Top + 4, 110, "GoToDashboard", False
+    AddButton ThisWorkbook.Worksheets(DIVIDEND_SHEET), "btnDividendsToDashboard", "DASHBOARD", _
+              ThisWorkbook.Worksheets(DIVIDEND_SHEET).Range("E1").Left, ThisWorkbook.Worksheets(DIVIDEND_SHEET).Range("B1").Top + 4, 110, "GoToDashboard", False
     AddButton ledger, "btnAddTransaction", "DODAJ TRANSAKCJE", ledger.Range("O2").Left, ledger.Range("O2").Top, 175, "OpenTransactionEntry"
     AddButton entry, "btnSaveTransactions", "ZAPISZ TRANSAKCJE", entry.Range("C1").Left, entry.Range("A1").Top + 2, 175, "SaveNewTransactions"
     AddButton entry, "btnClearTransactions", "WYCZYŒÆ", entry.Range("C1").Left + 185, entry.Range("A1").Top + 2, 90, "ClearNewTransactions"
@@ -1397,7 +1405,15 @@ Private Sub SetupDataSheet()
               "&IF(AB12="""","""","" Najwiêcej zarobi³a pozycja ""&AB12&IF(AB14<0,"", najwiêcej traci ""&AB13&""."","".""))", "General"), _
         Array(17, "Tekst od odczytu", "=IF(ISNUMBER(AB9),""od odczytu ""&RIGHT(""0""&DAY(AB9),2)&"".""&RIGHT(""0""&MONTH(AB9),2)&"" ""&RIGHT(""0""&HOUR(AB9),2)&"":""&RIGHT(""0""&MINUTE(AB9),2),""brak wczeœniejszego odczytu"")", "General"), _
         Array(18, "Tekst kursy z", "=IF(ISNUMBER(AB11),""Kursy z ""&RIGHT(""0""&DAY(AB11),2)&"".""&RIGHT(""0""&MONTH(AB11),2)&"".""&YEAR(AB11)&"" ""&RIGHT(""0""&HOUR(AB11),2)&"":""&RIGHT(""0""&MINUTE(AB11),2),""Kursy: brak aktualizacji"")", "General"), _
-        Array(19, "Tekst gotówki", "=IFERROR(FIXED(AB7*100,1)&""% portfela w gotówce"","""")", "General"))
+        Array(19, "Tekst gotówki", "=IFERROR(FIXED(AB7*100,1)&""% portfela w gotówce"","""")", "General"), _
+        Array(20, "Dywidendy netto - 12 mies.", "=IFERROR(SUMPRODUCT((INDEX(AP2#,0,1)>EDATE(TODAY(),-12))*INDEX(AP2#,0,5)),0)", "#,##0.00 ""z³"""), _
+        Array(21, "Dywidendy netto - ³¹cznie", "=IFERROR(SUM(INDEX(AP2#,0,5)),0)", "#,##0.00 ""z³"""), _
+        Array(22, "Dywidendy netto - bie¿¹cy rok", "=IFERROR(SUMPRODUCT((YEAR(INDEX(AP2#,0,1))=YEAR(TODAY()))*INDEX(AP2#,0,5)),0)", "#,##0.00 ""z³"""), _
+        Array(23, "Koszt pozycji wyp³acaj¹cych", "=SUMIF(Pozycje!$C$5:$C$500,""Tak"",Pozycje!$F$5:$F$500)", "#,##0.00 ""z³"""), _
+        Array(24, "Stopa od kosztu (12 mies.)", "=IFERROR(AB20/AB23,0)", "0.00%"), _
+        Array(25, "Spó³ki wyp³acaj¹ce", "=COUNTIF(Pozycje!$C$5:$C$500,""Tak"")", "0"), _
+        Array(26, "Tekst dywidend", "=""³¹cznie ""&FIXED(AB21,2)&"" z³""", "General"), _
+        Array(27, "Dywidendy - œrednio miesiêcznie", "=AB20/12", "#,##0.00 ""z³"""))
     wsD.Range("AA1:AB1").Value = Array("Kluczowe liczby (Dashboard)", "Wartoœæ")
     For i = LBound(specs) To UBound(specs)
         wsD.Cells(specs(i)(0), "AA").Value = specs(i)(1)
@@ -1428,6 +1444,23 @@ Private Sub SetupDataSheet()
     wsD.Range("AK2").Formula2 = "=IFERROR(INDEX(AH2#,0,1)&""  (""&IF(INDEX(AH2#,0,3)>0,""+"","""")&FIXED(INDEX(AH2#,0,3)*100,1)&""%)"",INDEX(AH2#,0,1))"
     wsD.Range("AI2:AI500").NumberFormat = "#,##0.00"
     wsD.Range("AJ2:AJ500").NumberFormat = "0.0%"
+
+    ' Dywidendy: lista wyp³at z rejestru (data, spó³ka, kwota, podatek, netto), najnowsze na górze.
+    wsD.Range("AP1:AT1").Value = Array("Data", "Spó³ka", "Kwota", "Podatek", "Netto")
+    wsD.Range("AP2").Formula2 = "=LET(daty,Transakcje!$A$30:$A$500,nazwy,Transakcje!$B$30:$B$500,typy,Transakcje!$C$30:$C$500," & _
+        "kwoty,Transakcje!$E$30:$E$500,podatki,Transakcje!$F$30:$F$500,kontrola,Transakcje!$L$30:$L$500," & _
+        "maska,(typy=""Dywidenda"")*(kontrola=""OK"")*ISNUMBER(daty),podatkiN,IF(ISNUMBER(podatki),podatki,0)," & _
+        "IF(SUM(maska)=0,"""",SORTBY(FILTER(HSTACK(daty,nazwy,kwoty,podatkiN,kwoty-podatkiN),maska),FILTER(daty,maska),-1)))"
+    wsD.Range("AP2:AP2000").NumberFormat = "dd.mm.yyyy"
+    wsD.Range("AR2:AT2000").NumberFormat = "#,##0.00"
+    ' Dywidendy w ostatnich 24 miesi¹cach (dla wykresu).
+    wsD.Range("AW1:AY1").Value = Array("Miesi¹c", "Dywidendy netto", "Etykieta")
+    For i = 2 To 25
+        wsD.Cells(i, "AW").Formula2 = "=EDATE(DATE(YEAR(TODAY()),MONTH(TODAY()),1)," & (i - 25) & ")"
+        wsD.Cells(i, "AX").Formula2 = "=IFERROR(SUMPRODUCT((INDEX($AP$2#,0,1)>=AW" & i & ")*(INDEX($AP$2#,0,1)<EDATE(AW" & i & ",1))*INDEX($AP$2#,0,5)),0)"
+        wsD.Cells(i, "AY").Formula2 = "=RIGHT(""0""&MONTH(AW" & i & "),2)&"".""&RIGHT(YEAR(AW" & i & "),2)"
+    Next i
+    wsD.Range("AW2:AW25").NumberFormat = "mm.yyyy"
 
     ' Listy wyboru.
     wsD.Range("AN1").Value = "Filtr grupy"
@@ -1673,14 +1706,15 @@ Public Sub BuildDashboard()
     AddButton ws, "btnRefreshPortfolio", "AKTUALIZUJ KURSY", x0, 102, 150, "RefreshPortfolio", True
     AddButton ws, "btnOpenEntryDashboard", "DODAJ TRANSAKCJE", x0 + 160, 102, 150, "OpenTransactionEntry", False
     AddButton ws, "btnOpenAnalysis", "ANALIZA", x0 + 320, 102, 110, "GoToAnalysis", False
+    AddButton ws, "btnOpenDividends", "DYWIDENDY", x0 + 440, 102, 110, "GoToDividends", False
 
     ' 3) Kafelki z kluczowymi liczbami.
     y = 146
-    cardW = (totalW - 4 * gap) / 5
-    kpiLabels = Array("Wartoœæ portfela", "Zysk / strata", "Stopa zwrotu", "Wp³aty netto", "Wolne œrodki")
-    kpiRefs = Array("$AB$2", "$AB$4", "$AB$5", "$AB$3", "$AB$6")
-    kpiSubs = Array("", "wartoœæ minus wp³aty netto", "zysk " & ChrW(247) & " wp³aty netto", "wp³aty minus wyp³aty", "")
-    For i = 0 To 4
+    cardW = (totalW - 5 * gap) / 6
+    kpiLabels = Array("Wartoœæ portfela", "Zysk / strata", "Stopa zwrotu", "Wp³aty netto", "Wolne œrodki", "Dywidendy (12 mies.)")
+    kpiRefs = Array("$AB$2", "$AB$4", "$AB$5", "$AB$3", "$AB$6", "$AB$20")
+    kpiSubs = Array("", "wartoœæ minus wp³aty netto", "zysk " & ChrW(247) & " wp³aty netto", "wp³aty minus wyp³aty", "", "")
+    For i = 0 To 5
         cardL = x0 + i * (cardW + gap)
         If i = 0 Then
             AddPanel ws, "kpiCard" & i, cardL, y, cardW, 90, C_HERO, C_HEROLINE
@@ -1688,13 +1722,15 @@ Public Sub BuildDashboard()
             AddPanel ws, "kpiCard" & i, cardL, y, cardW, 90, C_PANEL, C_BORDER
         End If
         AddText ws, "kpiLbl" & i, CStr(kpiLabels(i)), cardL + 14, y + 12, cardW - 28, 16, 9, False, C_MUTED
-        AddText ws, "kpiVal" & i, "", cardL + 14, y + 30, cardW - 20, 30, 17, False, C_FG, "=" & DATA_SHEET & "!" & kpiRefs(i)
+        AddText ws, "kpiVal" & i, "", cardL + 14, y + 30, cardW - 20, 30, 15, False, IIf(i = 5, C_OK, C_FG), "=" & DATA_SHEET & "!" & kpiRefs(i)
         Select Case i
             Case 0
                 AddText ws, "kpiChip", "", cardL + 14, y + 64, 60, 16, 9, True, C_MUTED, "=" & DATA_SHEET & "!$AB$10"
                 AddText ws, "kpiSub0", "", cardL + 76, y + 64, cardW - 90, 16, 9, False, C_MUTED, "=" & DATA_SHEET & "!$AB$17"
             Case 4
                 AddText ws, "kpiSub4", "", cardL + 14, y + 64, cardW - 28, 16, 9, False, C_MUTED, "=" & DATA_SHEET & "!$AB$19"
+            Case 5
+                AddText ws, "kpiSub5", "", cardL + 14, y + 64, cardW - 28, 16, 9, False, C_MUTED, "=" & DATA_SHEET & "!$AB$26"
             Case Else
                 AddText ws, "kpiSub" & i, CStr(kpiSubs(i)), cardL + 14, y + 64, cardW - 28, 16, 9, False, C_MUTED
         End Select
@@ -1942,4 +1978,257 @@ Private Sub SetSignColor(ByVal ws As Worksheet, ByVal shapeName As String, ByVal
         End If
     End If
     ws.Shapes(shapeName).TextFrame2.TextRange.Font.Fill.ForeColor.RGB = c
+End Sub
+
+' ---------------------------------------------------------------------------
+' ARKUSZ "DYWIDENDY" (+ dodatkowo szacunek podatku Belki)
+' ród³o: wpisy typu Dywidenda w arkuszu Transakcje (lista w Dane!AP2#:
+' data, spó³ka, kwota, podatek, netto). Kwota z "Nowe transakcje" to netto.
+' ---------------------------------------------------------------------------
+Public Sub GoToDividends()
+    ThisWorkbook.Worksheets(DIVIDEND_SHEET).Activate
+End Sub
+
+Public Sub BuildDividendsSheet()
+    Dim ws As Worksheet, wsD As Worksheet
+    Dim co As ChartObject
+    Dim s As Series
+    Dim keepYear As Variant, keepRates As Variant
+    Dim n As Long, i As Long
+    Dim compRow As Long, histRow As Long
+    Dim labels As Variant
+
+    Set wsD = ThisWorkbook.Worksheets(DATA_SHEET)
+    Application.Calculate
+    n = 1
+    If IsNumeric(wsD.Range("AB15").Value) Then n = CLng(wsD.Range("AB15").Value)
+    If n < 1 Then n = 1
+
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(DIVIDEND_SHEET)
+    On Error GoTo 0
+    keepYear = Year(Date)
+    keepRates = Array(0.19, 0.15, 0, 0)
+    If ws Is Nothing Then
+        Set ws = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Worksheets(ANALYSIS_SHEET))
+        ws.Name = DIVIDEND_SHEET
+    Else
+        ' Zachowaj rok i stawki wpisane przez u¿ytkownika.
+        If IsNumeric(ws.Range("M6").Value) And Not IsEmpty(ws.Range("M6").Value) Then keepYear = ws.Range("M6").Value
+        For i = 0 To 3
+            If IsNumeric(ws.Cells(15 + i, "M").Value) And Not IsEmpty(ws.Cells(15 + i, "M").Value) Then keepRates(i) = ws.Cells(15 + i, "M").Value
+        Next i
+        Do While ws.ChartObjects.Count > 0
+            ws.ChartObjects(1).Delete
+        Loop
+        Do While ws.Shapes.Count > 0
+            ws.Shapes(1).Delete
+        Loop
+        On Error Resume Next
+        ws.Cells.Validation.Delete
+        ws.Cells.FormatConditions.Delete
+        On Error GoTo 0
+        ws.Cells.Clear
+    End If
+
+    ThemeSheet ws
+    ShowSheetLikeApp ws, True
+    ws.Cells.RowHeight = 18
+    ws.Columns("A").ColumnWidth = 2
+    ws.Columns("B").ColumnWidth = 28
+    ws.Columns("C:J").ColumnWidth = 13
+    ws.Columns("K").ColumnWidth = 3
+    ws.Columns("L").ColumnWidth = 34
+    ws.Columns("M").ColumnWidth = 14
+    ws.Columns("N").ColumnWidth = 3
+
+    With ws
+        .Range("B1").Value = "Dywidendy"
+        .Range("B1").Font.Size = 20
+        .Rows(1).RowHeight = 36
+        .Range("B1").VerticalAlignment = xlCenter
+        .Range("B2").Value = "Kwoty netto (to, co wp³ynê³o na konto), z wpisów typu Dywidenda w arkuszu Transakcje. " & _
+                             "Spó³ka trafia do tabeli, gdy jest oznaczona jako wyp³acaj¹ca albo gdy zapisano ju¿ jej dywidendê."
+        .Range("B2").Font.Color = C_MUTED
+
+        ' Kafelki
+        labels = Array("Otrzymane ³¹cznie", "W tym roku", "Ostatnie 12 miesiêcy", "Œrednio miesiêcznie (12 mies.)", _
+                       "Stopa od kosztu (12 mies.)", "Spó³ki wyp³acaj¹ce")
+        For i = 0 To 5
+            .Cells(4, 2 + i).Value = labels(i)
+        Next i
+        .Range("B5").Formula2 = "=" & DATA_SHEET & "!$AB$21"
+        .Range("C5").Formula2 = "=" & DATA_SHEET & "!$AB$22"
+        .Range("D5").Formula2 = "=" & DATA_SHEET & "!$AB$20"
+        .Range("E5").Formula2 = "=" & DATA_SHEET & "!$AB$27"
+        .Range("F5").Formula2 = "=" & DATA_SHEET & "!$AB$24"
+        .Range("G5").Formula2 = "=" & DATA_SHEET & "!$AB$25&"" z ""&" & DATA_SHEET & "!$AB$15"
+        With .Range("B4:G4")
+            .Font.Size = 9
+            .Font.Color = C_MUTED
+            .Interior.Color = C_PANEL
+            .WrapText = True
+            .VerticalAlignment = xlCenter
+        End With
+        .Rows(4).RowHeight = 28
+        With .Range("B5:G5")
+            .Font.Size = 15
+            .Interior.Color = C_PANEL
+            .HorizontalAlignment = xlLeft
+        End With
+        .Range("B5:G5").Font.Color = C_FG
+        .Range("B5:D5").Font.Color = C_OK
+        .Rows(5).RowHeight = 30
+        .Range("B5:E5").NumberFormat = "#,##0.00 ""z³"""
+        .Range("F5").NumberFormat = "0.00%"
+    End With
+
+    ' Wykres miesiêczny (24 miesi¹ce).
+    Set co = ws.ChartObjects.Add(ws.Range("B7").Left, ws.Range("B7").Top, ws.Range("B7:J7").Width, ws.Range("B7:B20").Height)
+    co.Name = "WykresDywidend"
+    co.Placement = xlFreeFloating
+    With co.Chart
+        Do While .SeriesCollection.Count > 0
+            .SeriesCollection(1).Delete
+        Loop
+        Set s = .SeriesCollection.NewSeries
+        s.Name = "Dywidendy netto (PLN)"
+        s.XValues = wsD.Range("AY2:AY25")
+        s.Values = wsD.Range("AX2:AX25")
+        s.Format.Fill.ForeColor.RGB = C_OK
+        s.Format.Line.Visible = msoFalse
+        .ChartType = xlColumnClustered
+        .HasLegend = False
+        .ChartGroups(1).GapWidth = 40
+        StyleChartDark co.Chart, "Dywidendy w ostatnich 24 miesi¹cach (netto, PLN)"
+        On Error Resume Next
+        .Axes(xlValue).TickLabels.NumberFormat = "#,##0"
+        On Error GoTo 0
+    End With
+
+    ' Tabela spó³ek.
+    compRow = 23
+    ws.Cells(compRow - 1, "B").Value = "Spó³ki"
+    ws.Cells(compRow - 1, "B").Font.Size = 12
+    ws.Cells(compRow - 1, "B").Font.Bold = True
+    ws.Range(ws.Cells(compRow, "B"), ws.Cells(compRow, "J")).Value = Array("Spó³ka / ETF", "Dywidenda", "Otrzymane ³¹cznie", _
+        "W tym roku", "Ostatnie 12 mies.", "Ostatnia wyp³ata", "Liczba wyp³at", "Koszt pozycji", "Stopa od kosztu (12 mies.)")
+    StyleTableHeader ws.Range(ws.Cells(compRow, "B"), ws.Cells(compRow, "J"))
+    ws.Cells(compRow + 1, "B").Formula2 = "=LET(nazwy,Pozycje!$B$5:$B$500,statusy,Pozycje!$C$5:$C$500,koszty,Pozycje!$F$5:$F$500," & _
+        "dDaty,INDEX(" & DATA_SHEET & "!$AP$2#,0,1),dNazwy,INDEX(" & DATA_SHEET & "!$AP$2#,0,2),dNetto,INDEX(" & DATA_SHEET & "!$AP$2#,0,5)," & _
+        "lacznie,IFERROR(SUMIFS(dNetto,dNazwy,nazwy),0)," & _
+        "biezacy,IFERROR(SUMIFS(dNetto,dNazwy,nazwy,dDaty,"">=""&DATE(YEAR(TODAY()),1,1)),0)," & _
+        "ost12,IFERROR(SUMIFS(dNetto,dNazwy,nazwy,dDaty,"">""&EDATE(TODAY(),-12)),0)," & _
+        "ostatnia,IFERROR(MAXIFS(dDaty,dNazwy,nazwy),0),ilosc,IFERROR(COUNTIFS(dNazwy,nazwy),0)," & _
+        "stopy,IFERROR(ost12/koszty,0),opis,IF(statusy=""Tak"",""Wyp³aca"",statusy)," & _
+        "maska,(nazwy<>"""")*(((statusy=""Tak"")+(lacznie>0))>0)," & _
+        "IF(SUM(maska)=0,""Brak spó³ek wyp³acaj¹cych dywidendy""," & _
+        "SORTBY(FILTER(HSTACK(nazwy,opis,lacznie,biezacy,ost12,ostatnia,ilosc,koszty,stopy),maska),FILTER(lacznie,maska),-1,FILTER(koszty,maska),-1)))"
+    StyleTableBody ws.Range(ws.Cells(compRow + 1, "B"), ws.Cells(compRow + n + 1, "J"))
+    ws.Range(ws.Cells(compRow + 1, "B"), ws.Cells(compRow + n + 1, "C")).HorizontalAlignment = xlLeft
+    ws.Range(ws.Cells(compRow + 1, "C"), ws.Cells(compRow + n + 1, "C")).Font.Color = C_MUTED
+    ws.Range(ws.Cells(compRow + 1, "D"), ws.Cells(compRow + n + 1, "F")).NumberFormat = "#,##0.00;-#,##0.00;""-"""
+    ws.Range(ws.Cells(compRow + 1, "G"), ws.Cells(compRow + n + 1, "G")).NumberFormat = "dd.mm.yyyy;;""-"""
+    ws.Range(ws.Cells(compRow + 1, "H"), ws.Cells(compRow + n + 1, "H")).NumberFormat = "0;;""-"""
+    ws.Range(ws.Cells(compRow + 1, "I"), ws.Cells(compRow + n + 1, "I")).NumberFormat = "#,##0.00"
+    ws.Range(ws.Cells(compRow + 1, "J"), ws.Cells(compRow + n + 1, "J")).NumberFormat = "0.00%;;""-"""
+    ws.Range(ws.Cells(compRow + 1, "D"), ws.Cells(compRow + n + 1, "F")).Font.Color = C_OK
+
+    ' Historia wyp³at (najnowsze na górze).
+    histRow = compRow + n + 4
+    ws.Cells(histRow - 1, "B").Value = "Historia wyp³at"
+    ws.Cells(histRow - 1, "B").Font.Size = 12
+    ws.Cells(histRow - 1, "B").Font.Bold = True
+    ws.Range(ws.Cells(histRow, "B"), ws.Cells(histRow, "F")).Value = Array("Data", "Spó³ka / ETF", "Kwota", "Podatek", "Netto")
+    StyleTableHeader ws.Range(ws.Cells(histRow, "B"), ws.Cells(histRow, "F"))
+    ws.Cells(histRow + 1, "B").Formula2 = "=IFERROR(IF(INDEX(" & DATA_SHEET & "!$AP$2#,1,1)="""",""Brak zapisanych dywidend - dodaj je w arkuszu Nowe transakcje (typ Dywidenda)."", " & _
+        DATA_SHEET & "!$AP$2#),""Brak zapisanych dywidend."")"
+    StyleTableBody ws.Range(ws.Cells(histRow + 1, "B"), ws.Cells(histRow + 200, "F"))
+    ws.Range(ws.Cells(histRow + 1, "B"), ws.Cells(histRow + 200, "C")).HorizontalAlignment = xlLeft
+    ws.Range(ws.Cells(histRow + 1, "B"), ws.Cells(histRow + 200, "B")).NumberFormat = "dd.mm.yyyy"
+    ws.Range(ws.Cells(histRow + 1, "D"), ws.Cells(histRow + 200, "F")).NumberFormat = "#,##0.00"
+
+    BuildBelkaPanel ws, keepYear, keepRates
+End Sub
+
+' Dodatek: szacunek podatku Belki (19%) za wybrany rok.
+Private Sub BuildBelkaPanel(ByVal ws As Worksheet, ByVal taxYear As Variant, ByVal rates As Variant)
+    Dim i As Long
+    With ws
+        .Range("L4").Value = "Podatek Belki - szacunek (dodatek)"
+        .Range("L4").Font.Bold = True
+        .Range("L4").Font.Size = 11
+        .Range("L6").Value = "Rok podatkowy"
+        .Range("M6").Value = taxYear
+        .Range("M6").Interior.Color = C_INPUT
+        .Range("M6").Borders.Color = C_BORDER
+        .Range("M6").NumberFormat = "0"
+        .Range("M6").HorizontalAlignment = xlRight
+
+        .Range("L8").Value = "Zrealizowany wynik ze sprzeda¿y"
+        .Range("M8").Formula2 = "=IFERROR(LET(rokP,$M$6,daty,Transakcje!$A$30:$A$500,typy,Transakcje!$C$30:$C$500,wyniki,Transakcje!$I$30:$I$500," & _
+            "SUM(IF((typy=""Sprzeda¿"")*ISNUMBER(daty)*ISNUMBER(wyniki),IF(YEAR(daty)=rokP,wyniki,0),0))),0)"
+        .Range("L9").Value = "Podatek od sprzeda¿y (19%)"
+        .Range("M9").Formula2 = "=MAX(0,M8)*0.19"
+        .Range("L10").Value = "Dop³ata od dywidend zagranicznych"
+        .Range("M10").Formula2 = "=IFERROR(LET(rokP,$M$6,dDaty,INDEX(" & DATA_SHEET & "!$AP$2#,0,1),dNazwy,INDEX(" & DATA_SHEET & "!$AP$2#,0,2)," & _
+            "dKwoty,INDEX(" & DATA_SHEET & "!$AP$2#,0,3),dPodatki,INDEX(" & DATA_SHEET & "!$AP$2#,0,4),dNetto,INDEX(" & DATA_SHEET & "!$AP$2#,0,5)," & _
+            "waluty,XLOOKUP(dNazwy,Notowania!$A$7:$A$502,Notowania!$F$7:$F$502,""PLN"")," & _
+            "stawki,XLOOKUP(waluty,$L$15:$L$18,$M$15:$M$18,0.19)," & _
+            "brutto,IF(dPodatki>0,dKwoty,dNetto/(1-stawki)),pobrany,IF(dPodatki>0,dPodatki,brutto*stawki)," & _
+            "doplata,IF(YEAR(dDaty)=rokP,IF(0.19*brutto-pobrany>0,0.19*brutto-pobrany,0),0),SUM(doplata)),0)"
+        .Range("L11").Value = "Razem do zap³aty (szacunek)"
+        .Range("M11").Formula2 = "=M9+M10"
+        .Range("L11:M11").Font.Bold = True
+        .Range("M8:M11").NumberFormat = "#,##0.00 ""z³"";-#,##0.00 ""z³"""
+        .Range("L8:M11").Borders(xlInsideHorizontal).Color = C_ROWLINE
+        .Range("L11:M11").Borders(xlEdgeTop).Color = C_BORDER
+
+        .Range("L13").Value = "Podatek pobrany u Ÿród³a (za³o¿enia, mo¿esz zmieniæ)"
+        .Range("L13").Font.Color = C_MUTED
+        .Range("L14:M14").Value = Array("Waluta notowania", "Stawka")
+        .Range("L14:M14").Font.Color = C_MUTED
+        .Range("L15:L18").Value = Application.WorksheetFunction.Transpose(Array("PLN", "USD", "GBP", "EUR"))
+        For i = 0 To 3
+            .Cells(15 + i, "M").Value = rates(i)
+        Next i
+        .Range("M15:M18").NumberFormat = "0%"
+        .Range("M15:M18").Interior.Color = C_INPUT
+        .Range("M15:M18").Borders.Color = C_BORDER
+
+        .Range("L20").Value = "To tylko szacunek do planowania. Urz¹d liczy koszt metod¹ FIFO i po kursach NBP z dnia " & _
+            "poprzedzaj¹cego transakcjê, a tu u¿ywana jest œrednia cena i kwoty w PLN z Twoich wpisów. " & _
+            "Dywidendy z GPW s¹ ju¿ opodatkowane u Ÿród³a. Do PIT-38 u¿yj PIT-8C od brokera."
+        .Range("L20:M27").Merge
+        .Range("L20").WrapText = True
+        .Range("L20").VerticalAlignment = xlTop
+        .Range("L20").Font.Size = 9
+        .Range("L20").Font.Color = C_MUTED
+        .Range("L4:M27").Interior.Color = C_PANEL
+    End With
+End Sub
+
+Private Sub StyleTableHeader(ByVal rng As Range)
+    With rng
+        .Font.Color = C_MUTED
+        .Font.Size = 9
+        .Interior.Color = C_PANEL
+        .WrapText = True
+        .VerticalAlignment = xlCenter
+        .HorizontalAlignment = xlRight
+        .Borders(xlEdgeBottom).Color = C_BORDER
+        .RowHeight = 30
+    End With
+    rng.Cells(1, 1).HorizontalAlignment = xlLeft
+End Sub
+
+Private Sub StyleTableBody(ByVal rng As Range)
+    With rng
+        .Interior.Color = C_PANEL
+        .Borders(xlInsideHorizontal).Color = C_ROWLINE
+        .Borders(xlEdgeBottom).Color = C_ROWLINE
+        .HorizontalAlignment = xlRight
+        .VerticalAlignment = xlCenter
+        .RowHeight = 20
+    End With
 End Sub

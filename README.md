@@ -18,7 +18,8 @@ ale pobrany plik (przycisk *Download raw file*) jest poprawny.
 
 ## Arkusze skoroszytu
 
-- **Dashboard** (ciemny motyw): kafelki z wartością portfela, zyskiem, stopą zwrotu, wpłatami i gotówką; wykres wartości na tle wpłat; skład portfela według klasy i waluty; zysk/strata każdej pozycji; tabela pozycji z filtrem (Wszystkie / Akcje / ETF-y) i wyszukiwarką.
+- **Dashboard** (ciemny motyw): kafelki z wartością portfela, zyskiem, stopą zwrotu, wpłatami, gotówką i dywidendami z 12 miesięcy; wykres wartości na tle wpłat; skład portfela według klasy i waluty; zysk/strata każdej pozycji; tabela pozycji z filtrem (Wszystkie / Akcje / ETF-y) i wyszukiwarką.
+- **Dywidendy**: otrzymane dywidendy (łącznie, w tym roku, ostatnie 12 miesięcy, średnio miesięcznie, stopa od kosztu), wykres z 24 miesięcy, tabela spółek i historia wypłat; z boku szacunek podatku Belki.
 - **Analiza**: stopa zwrotu skorygowana o wpłaty (TWR), porównanie z benchmarkiem (domyślnie VWCE), wykresy i tabela wyników w okresach (dzień / miesiąc / rok).
 - **Nowe transakcje**: wpisywanie operacji (kupno, sprzedaż, wpłata, wypłata, dywidenda) i przycisk ZAPISZ TRANSAKCJE.
 - **Transakcje**: rejestr wszystkich operacji; liczy jednostki, koszt średni, gotówkę i zrealizowany wynik.
@@ -73,3 +74,13 @@ Arkusz **Nowe transakcje**, jeden wiersz = jedna operacja, potem **ZAPISZ TRANSA
   a każda kolejna wpłata/wypłata kupuje/sprzedaje jego jednostki po cenie z tego dnia.
 - **Okres w tabeli** zmieniasz w komórce `C4` (Dzień / Miesiąc / Rok).
 - Analiza obejmuje okres od pierwszego wpisu w historii (19.11.2026); wcześniejszej historii wartości nie ma.
+
+## Dywidendy i podatek Belki
+
+- Dywidendy pochodzą z wpisów typu **Dywidenda** w arkuszu Transakcje. Kwota wpisana w „Nowe transakcje”
+  to kwota netto (to, co wpłynęło na konto).
+- **Stopa od kosztu** = dywidendy netto z 12 miesięcy ÷ koszt zakupu spółek wypłacających.
+- **Podatek Belki (szacunek, dodatek)**: 19% od zrealizowanego wyniku ze sprzedaży w wybranym roku oraz dopłata
+  do dywidend zagranicznych. Kwotę brutto i podatek pobrany u źródła wylicza się ze stawek w tabeli założeń
+  (domyślnie PLN 19%, USD 15%, GBP 0%, EUR 0%; można je zmienić). Urząd liczy koszt metodą FIFO i po kursach NBP,
+  więc wynik to tylko orientacja; do PIT-38 służy PIT-8C od brokera.
