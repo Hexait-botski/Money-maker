@@ -1074,7 +1074,6 @@ Private Sub SetupAnalysisSheet()
     Dim ws As Worksheet
     Dim lo As ListObject
     Dim labels As Variant
-    Dim keepStarts As Object
     Dim i As Long
 
     On Error Resume Next
@@ -2034,6 +2033,7 @@ End Sub
 
 Public Sub BuildDividendsSheet()
     Dim ws As Worksheet, wsD As Worksheet
+    Dim keepStarts As Object
     Dim co As ChartObject
     Dim s As Series
     Dim keepYear As Variant, keepRates As Variant
