@@ -18,7 +18,8 @@ ale pobrany plik (przycisk *Download raw file*) jest poprawny.
 
 ## Arkusze skoroszytu
 
-- **Dashboard**: wartość portfela, wpłaty netto, wynik, skład portfela, wykres zysków/strat spółek, największe pozycje, historia wartości.
+- **Dashboard**: wartość portfela, wpłaty netto, wynik, skład portfela, wykres zysków/strat spółek, największe pozycje, historia wartości (ukryta tabela `HistoriaPortfela`).
+- **Analiza**: stopa zwrotu skorygowana o wpłaty (TWR), porównanie z benchmarkiem (domyślnie VWCE), wykresy i tabela wyników w okresach (dzień / miesiąc / rok).
 - **Nowe transakcje**: wpisywanie operacji (kupno, sprzedaż, wpłata, wypłata, dywidenda) i przycisk ZAPISZ TRANSAKCJE.
 - **Transakcje**: rejestr wszystkich operacji; liczy jednostki, koszt średni, gotówkę i zrealizowany wynik.
 - **Notowania**: kursy instrumentów i walut (Yahoo, potem `STOCKHISTORY`, potem cena zapasowa).
@@ -58,3 +59,14 @@ Arkusz **Nowe transakcje**, jeden wiersz = jedna operacja, potem **ZAPISZ TRANSA
   używany jest kurs zamknięcia z `STOCKHISTORY`, a potem cena zapasowa.
 - Spółki z Londynu notowane w pensach (np. National Grid) są przeliczane na GBP.
 - Po każdej udanej aktualizacji do tabeli `HistoriaPortfela` na Dashboardzie dopisywany jest wpis (jeden dziennie).
+
+## Analiza
+
+- **Stopa zwrotu portfela (TWR)**: zwroty między kolejnymi wpisami historii, z wyłączeniem
+  wpłat i wypłat, mnożone łańcuchowo. Wpłata nie zawyża wyniku, a wypłata go nie zaniża.
+- **Benchmark**: ticker w komórce `C5` (zapis jak w `STOCKHISTORY`, np. `XETR:VWCE`) i jego waluta w `C6`.
+  Ceny i kursy walut pobiera `STOCKHISTORY` (kurs zamknięcia z danego dnia lub ostatniego dnia notowań).
+- **„Gdyby wpłaty szły w benchmark”**: na starcie historii cała wartość portfela trafia do benchmarku,
+  a każda kolejna wpłata/wypłata kupuje/sprzedaje jego jednostki po cenie z tego dnia.
+- **Okres w tabeli** zmieniasz w komórce `C4` (Dzień / Miesiąc / Rok).
+- Analiza obejmuje okres od pierwszego wpisu w historii (19.11.2026); wcześniejszej historii wartości nie ma.

@@ -21,6 +21,7 @@ Private Declare Sub Sleep Lib "kernel32" (ByVal dwMilliseconds As Long)
 ' ---------------------------------------------------------------------------
 
 Public Const ENTRY_SHEET As String = "Nowe transakcje"
+Public Const ANALYSIS_SHEET As String = "Analiza"
 Public Const ENTRY_HEADER_ROW As Long = 5
 Public Const ENTRY_FIRST_ROW As Long = 6
 Public Const ENTRY_LAST_ROW As Long = 55
@@ -877,16 +878,18 @@ Public Sub InstallPortfolioTools()
     SetupEntrySheet
     SetupQuotesSheet
     ApplyDashboardFormulas
+    SetupAnalysisSheet
     SetupButtons
 
     Application.Calculate
-    ThisWorkbook.Worksheets(ENTRY_SHEET).Activate
+    ThisWorkbook.Worksheets(ANALYSIS_SHEET).Activate
     Application.ScreenUpdating = True
     MsgBox "Gotowe." & vbCrLf & vbCrLf & _
            "- nowy arkusz ""Nowe transakcje"" z przyciskiem ZAPISZ TRANSAKCJE," & vbCrLf & _
            "- dynamiczna lista najwiêkszych pozycji," & vbCrLf & _
            "- poprawka cen z Londynu podawanych w pensach," & vbCrLf & _
-           "- historia portfela zapisywana przy ka¿dej aktualizacji kursów." & vbCrLf & vbCrLf & _
+           "- historia portfela zapisywana przy ka¿dej aktualizacji kursów," & vbCrLf & _
+           "- arkusz ""Analiza"": stopa zwrotu skorygowana o wp³aty i porównanie z benchmarkiem." & vbCrLf & vbCrLf & _
            "Zapisz plik (Ctrl+S).", vbInformation, "Portfel inwestycyjny"
     Exit Sub
 
@@ -1056,6 +1059,9 @@ Private Sub SetupButtons()
 
     AddButton dash, "btnRefreshPortfolio", "AKTUALIZUJ KURSY", refreshLeft, refreshTop, 150, "RefreshPortfolio"
     AddButton dash, "btnOpenEntryDashboard", "DODAJ TRANSAKCJE", refreshLeft, refreshTop + 36, 150, "OpenTransactionEntry"
+    AddButton dash, "btnOpenAnalysis", "ANALIZA", refreshLeft, refreshTop + 72, 150, "GoToAnalysis"
+    AddButton ThisWorkbook.Worksheets(ANALYSIS_SHEET), "btnRefreshAnalysis", "AKTUALIZUJ KURSY", _
+              ThisWorkbook.Worksheets(ANALYSIS_SHEET).Range("E4").Left, ThisWorkbook.Worksheets(ANALYSIS_SHEET).Range("B1").Top + 2, 150, "RefreshPortfolio"
     AddButton ledger, "btnAddTransaction", "DODAJ TRANSAKCJE", ledger.Range("O2").Left, ledger.Range("O2").Top, 175, "OpenTransactionEntry"
     AddButton entry, "btnSaveTransactions", "ZAPISZ TRANSAKCJE", entry.Range("C1").Left, entry.Range("A1").Top + 2, 175, "SaveNewTransactions"
     AddButton entry, "btnClearTransactions", "WYCZYŒÆ", entry.Range("C1").Left + 185, entry.Range("A1").Top + 2, 90, "ClearNewTransactions"
@@ -1083,4 +1089,294 @@ Private Sub AddButton(ByVal ws As Worksheet, ByVal shapeName As String, ByVal ca
         .TextFrame.Characters.Font.Bold = True
         .TextFrame.Characters.Font.Color = RGB(15, 23, 42)
     End With
+End Sub
+
+' ---------------------------------------------------------------------------
+' ARKUSZ "ANALIZA"
+' Stopa zwrotu skorygowana o wp³aty (metoda TWR: zwroty miêdzy kolejnymi
+' wpisami historii, z wy³¹czeniem wp³at/wyp³at, mno¿one ³añcuchowo)
+' i porównanie z benchmarkiem (domyœlnie VWCE, ceny z STOCKHISTORY).
+' Dane: tabela HistoriaPortfela na Dashboardzie (ukryte kolumny O:Z).
+' ---------------------------------------------------------------------------
+Public Sub GoToAnalysis()
+    ThisWorkbook.Worksheets(ANALYSIS_SHEET).Activate
+    ThisWorkbook.Worksheets(ANALYSIS_SHEET).Range("A1").Select
+End Sub
+
+Private Sub SetupAnalysisSheet()
+    Dim ws As Worksheet
+    Dim lo As ListObject
+    Dim labels As Variant
+    Dim i As Long
+
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(ANALYSIS_SHEET)
+    On Error GoTo 0
+    If ws Is Nothing Then
+        Set ws = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Worksheets("Dashboard"))
+        ws.Name = ANALYSIS_SHEET
+    Else
+        Do While ws.ChartObjects.Count > 0
+            ws.ChartObjects(1).Delete
+        Loop
+        Do While ws.Shapes.Count > 0
+            ws.Shapes(1).Delete
+        Loop
+        On Error Resume Next
+        ws.Cells.Validation.Delete
+        On Error GoTo 0
+        ws.Cells.Clear
+        ws.Columns.Hidden = False
+    End If
+    ws.Activate
+    ActiveWindow.DisplayGridlines = False
+
+    With ws
+        .Cells.Font.Name = "Arial"
+        .Cells.Font.Size = 10
+        .Columns("A").ColumnWidth = 2
+        .Columns("B").ColumnWidth = 22
+        .Columns("C:H").ColumnWidth = 19
+
+        .Range("B1").Value = "ANALIZA PORTFELA"
+        .Range("B1").Font.Size = 16
+        .Range("B1").Font.Bold = True
+        .Rows(1).RowHeight = 34
+        .Range("B1").VerticalAlignment = xlCenter
+        .Range("B2").Value = "Stopa zwrotu skorygowana o wp³aty (TWR) i porównanie z benchmarkiem. Nowy wpis w historii powstaje przy ka¿dej aktualizacji kursów, raz dziennie."
+        .Range("B2").Font.Color = RGB(71, 85, 105)
+
+        ' Ustawienia
+        .Range("B4").Value = "Okres w tabeli"
+        .Range("C4").Value = "Miesi¹c"
+        .Range("B5").Value = "Benchmark (ticker)"
+        .Range("C5").Value = "XETR:VWCE"
+        .Range("B6").Value = "Waluta benchmarku"
+        .Range("C6").Value = "EUR"
+        .Range("D5").Value = "np. XETR:VWCE, XNAS:QQQ, XLON:VUSA - zapis jak w STOCKHISTORY"
+        .Range("D5:D6").Font.Color = RGB(100, 116, 139)
+        .Range("D6").Value = "waluta notowañ benchmarku (PLN, EUR, USD, GBP)"
+        .Range("B7").Value = "Historia od / do"
+        .Range("C7").Formula2 = "=IFERROR(MIN(HistoriaPortfela[Data]),"""")"
+        .Range("D7").Formula2 = "=IFERROR(MAX(HistoriaPortfela[Data]),"""")"
+        .Range("C7:D7").NumberFormat = "dd.mm.yyyy"
+        .Range("C7:D7").HorizontalAlignment = xlLeft
+        .Range("B4:B7").Font.Bold = True
+        .Range("C4:C6").Interior.Color = RGB(255, 247, 214)
+        .Range("C4:C6").Borders.Color = RGB(226, 232, 240)
+        .Range("Y5:Y7").Value = Application.WorksheetFunction.Transpose(Array("Dzieñ", "Miesi¹c", "Rok"))
+        .Range("Z5:Z8").Value = Application.WorksheetFunction.Transpose(Array("PLN", "EUR", "USD", "GBP"))
+        AddListValidation .Range("C4"), "=$Y$5:$Y$7", True
+        AddListValidation .Range("C6"), "=$Z$5:$Z$8", True
+
+        ' Ceny benchmarku i kursy walut (ukryte kolumny AA:AE)
+        .Range("AA4").Value = "Benchmark: data, cena"
+        .Range("AA5").Formula2 = "=IFERROR(STOCKHISTORY($C$5,INT(MIN(HistoriaPortfela[Data]))-10,TODAY(),0,0,0,1),""brak"")"
+        .Range("AD4").Value = "Kurs waluty: data, kurs"
+        .Range("AD5").Formula2 = "=IF($C$6=""PLN"",""PLN"",IFERROR(STOCKHISTORY($C$6&""/PLN"",INT(MIN(HistoriaPortfela[Data]))-10,TODAY(),0,0,0,1),""brak""))"
+    End With
+
+    ' Kolumny obliczeniowe w tabeli historii (wymagaj¹ arkusza Analiza).
+    Set lo = SetupHistoryColumns()
+
+    With ws
+        ' WskaŸniki
+        labels = Array("Wartoœæ portfela", "Stopa zwrotu portfela (TWR)", "Stopa zwrotu benchmarku", _
+                       "Portfel - benchmark (pkt proc.)", "Gdyby wp³aty sz³y w benchmark", "Portfel - benchmark (PLN)")
+        For i = 0 To 5
+            .Cells(9, 2 + i).Value = labels(i)
+        Next i
+        With .Range("B9:G9")
+            .Font.Size = 9
+            .Font.Color = RGB(165, 178, 196)
+            .Interior.Color = RGB(20, 36, 61)
+            .WrapText = True
+            .VerticalAlignment = xlCenter
+        End With
+        .Rows(9).RowHeight = 28
+        .Range("B10").Formula2 = "=IFERROR(INDEX(HistoriaPortfela[Wartoœæ portfela],ROWS(HistoriaPortfela[Wartoœæ portfela])),"""")"
+        .Range("C10").Formula2 = "=IFERROR(INDEX(HistoriaPortfela[Stopa portfela],ROWS(HistoriaPortfela[Stopa portfela])),"""")"
+        .Range("D10").Formula2 = "=IFERROR(INDEX(HistoriaPortfela[Stopa benchmarku],ROWS(HistoriaPortfela[Stopa benchmarku])),"""")"
+        .Range("E10").Formula2 = "=IFERROR(C10-D10,"""")"
+        .Range("F10").Formula2 = "=IFERROR(INDEX(HistoriaPortfela[Wartoœæ w benchmarku],ROWS(HistoriaPortfela[Wartoœæ w benchmarku])),"""")"
+        .Range("G10").Formula2 = "=IFERROR(B10-F10,"""")"
+        With .Range("B10:G10")
+            .Font.Size = 15
+            .Font.Bold = True
+            .Font.Color = RGB(245, 160, 0)
+            .Interior.Color = RGB(20, 36, 61)
+            .HorizontalAlignment = xlLeft
+        End With
+        .Rows(10).RowHeight = 30
+        .Range("B10,F10,G10").NumberFormat = "#,##0.00 ""z³"";[Red]-#,##0.00 ""z³"""
+        .Range("C10:E10").NumberFormat = "0.00%;[Red]-0.00%"
+
+        ' Tabela okresów
+        .Range("B33").Value = "Wyniki w okresach (najnowsze na górze) - okres zmienisz w komórce C4"
+        .Range("B33").Font.Bold = True
+        .Range("B34:H34").Value = Array("Okres", "Wartoœæ na koniec", "Wp³aty netto w okresie", _
+                                        "Zysk w okresie (PLN)", "Stopa zwrotu portfela", "Stopa zwrotu benchmarku", "Ró¿nica (pkt proc.)")
+        With .Range("B34:H34")
+            .Font.Bold = True
+            .Font.Color = RGB(255, 255, 255)
+            .Interior.Color = RGB(15, 23, 42)
+            .WrapText = True
+            .VerticalAlignment = xlCenter
+        End With
+        .Rows(34).RowHeight = 30
+        .Range("B35").Formula2 = PeriodTableFormula()
+        .Range("C35:E2000").NumberFormat = "#,##0.00;[Red]-#,##0.00"
+        .Range("F35:H2000").NumberFormat = "0.00%;[Red]-0.00%"
+        .Range("B35:B2000").HorizontalAlignment = xlLeft
+
+        .Columns("Y:AE").Hidden = True
+    End With
+
+    BuildAnalysisCharts ws, lo
+End Sub
+
+Private Function PeriodTableFormula() As String
+    PeriodTableFormula = "=IFERROR(LET(" & _
+        "dni,INT(HistoriaPortfela[Data]),okres,$C$4," & _
+        "keyArr,IF(okres=""Rok"",YEAR(dni),IF(okres=""Miesi¹c"",YEAR(dni)*100+MONTH(dni),dni))," & _
+        "uniq,UNIQUE(keyArr),seq,SEQUENCE(ROWS(uniq))," & _
+        "endIx,XMATCH(uniq,keyArr,0,-1)," & _
+        "prvIx,IF(seq=1,1,INDEX(endIx,IF(seq=1,1,seq-1)))," & _
+        "valA,HistoriaPortfela[Wartoœæ portfela],depA,HistoriaPortfela[Wp³aty netto]," & _
+        "idxA,HistoriaPortfela[Indeks portfela],bixA,HistoriaPortfela[Indeks benchmarku]," & _
+        "vEnd,INDEX(valA,endIx),vSt,INDEX(valA,prvIx),dEnd,INDEX(depA,endIx),dSt,INDEX(depA,prvIx)," & _
+        "rPort,INDEX(idxA,endIx)/INDEX(idxA,prvIx)-1," & _
+        "rBen,IFERROR(INDEX(bixA,endIx)/INDEX(bixA,prvIx)-1,"""")," & _
+        "lbl,IF(okres=""Rok"",""""&uniq,IF(okres=""Miesi¹c"",INT(uniq/100)&""-""&RIGHT(""0""&MOD(uniq,100),2)," & _
+            "YEAR(uniq)&""-""&RIGHT(""0""&MONTH(uniq),2)&""-""&RIGHT(""0""&DAY(uniq),2)))," & _
+        "SORTBY(HSTACK(lbl,vEnd,dEnd-dSt,vEnd-vSt-(dEnd-dSt),rPort,rBen,IFERROR(rPort-rBen,"""")),uniq,-1))," & _
+        """Brak danych w historii portfela"")"
+End Function
+
+' Dodaje do tabeli HistoriaPortfela kolumny obliczeniowe (wype³niaj¹ siê same
+' dla ka¿dego nowego wpisu) i usuwa wpisy bez wartoœci portfela.
+Private Function SetupHistoryColumns() As ListObject
+    Dim ws As Worksheet
+    Dim lo As ListObject
+    Dim i As Long
+    Dim specs As Variant
+    Dim firstRow As String
+
+    Set ws = ThisWorkbook.Worksheets("Dashboard")
+    Set lo = ws.ListObjects("HistoriaPortfela")
+
+    For i = lo.ListRows.Count To 1 Step -1
+        If Len(Trim$(CStr(lo.ListRows(i).Range.Cells(1, 2).Value))) = 0 Then lo.ListRows(i).Delete
+    Next i
+
+    firstRow = "ROW()=ROW(HistoriaPortfela[#Headers])+1"
+    specs = Array( _
+        Array("Przep³yw", "=IF(" & firstRow & ",0,[@[Wp³aty netto]]-OFFSET([@[Wp³aty netto]],-1,0))", "#,##0.00"), _
+        Array("Zwrot okresu", "=IF(" & firstRow & ",0,IFERROR([@[Wartoœæ portfela]]/(OFFSET([@[Wartoœæ portfela]],-1,0)+[@Przep³yw])-1,0))", "0.00%"), _
+        Array("Indeks portfela", "=IF(" & firstRow & ",1,OFFSET([@[Indeks portfela]],-1,0)*(1+[@[Zwrot okresu]]))", "0.0000"), _
+        Array("Stopa portfela", "=[@[Indeks portfela]]-1", "0.00%"), _
+        Array("Cena benchmarku (PLN)", "=IFERROR(XLOOKUP(INT([@Data]),INDEX(Analiza!$AA$5#,0,1),INDEX(Analiza!$AA$5#,0,2),,-1)*" & _
+              "IF(Analiza!$C$6=""PLN"",1,XLOOKUP(INT([@Data]),INDEX(Analiza!$AD$5#,0,1),INDEX(Analiza!$AD$5#,0,2),,-1))," & _
+              "IF(" & firstRow & ","""",OFFSET([@[Cena benchmarku (PLN)]],-1,0)))", "#,##0.00"), _
+        Array("Indeks benchmarku", "=IFERROR([@[Cena benchmarku (PLN)]]/INDEX([Cena benchmarku (PLN)],1),"""")", "0.0000"), _
+        Array("Stopa benchmarku", "=IFERROR([@[Indeks benchmarku]]-1,NA())", "0.00%"), _
+        Array("Jednostki benchmarku", "=IFERROR(IF(" & firstRow & ",[@[Wartoœæ portfela]]/[@[Cena benchmarku (PLN)]]," & _
+              "OFFSET([@[Jednostki benchmarku]],-1,0)+[@Przep³yw]/[@[Cena benchmarku (PLN)]]),"""")", "0.0000"), _
+        Array("Wartoœæ w benchmarku", "=IFERROR([@[Jednostki benchmarku]]*[@[Cena benchmarku (PLN)]],NA())", "#,##0.00"))
+
+    For i = LBound(specs) To UBound(specs)
+        If Not ListColumnExists(lo, CStr(specs(i)(0))) Then
+            lo.ListColumns.Add.Name = CStr(specs(i)(0))
+        End If
+    Next i
+    If lo.ListRows.Count > 0 Then
+        For i = LBound(specs) To UBound(specs)
+            With lo.ListColumns(CStr(specs(i)(0))).DataBodyRange
+                .Formula2 = CStr(specs(i)(1))
+                .NumberFormat = CStr(specs(i)(2))
+            End With
+        Next i
+    End If
+    lo.Range.EntireColumn.Hidden = True
+    Set SetupHistoryColumns = lo
+End Function
+
+Private Function ListColumnExists(ByVal lo As ListObject, ByVal colName As String) As Boolean
+    Dim lc As ListColumn
+    For Each lc In lo.ListColumns
+        If StrComp(lc.Name, colName, vbTextCompare) = 0 Then
+            ListColumnExists = True
+            Exit Function
+        End If
+    Next lc
+End Function
+
+Private Sub BuildAnalysisCharts(ByVal ws As Worksheet, ByVal lo As ListObject)
+    Dim co As ChartObject
+    Dim topPos As Double, leftPos As Double, w As Double, h As Double
+
+    If lo.ListRows.Count = 0 Then Exit Sub
+    topPos = ws.Range("B12").Top
+    leftPos = ws.Range("B12").Left
+    w = ws.Range("B12:E12").Width - 6
+    h = ws.Range("B12:B31").Height
+
+    Set co = ws.ChartObjects.Add(leftPos, topPos, w, h)
+    co.Name = "WykresWartosciPortfela"
+    PrepareLineChart co.Chart, "Wartoœæ portfela, wp³aty i benchmark (PLN)"
+    AddLineSeries co.Chart, "Wartoœæ portfela", lo, "Wartoœæ portfela", RGB(245, 158, 11)
+    AddLineSeries co.Chart, "Wp³aty netto", lo, "Wp³aty netto", RGB(100, 116, 139)
+    AddLineSeries co.Chart, "Gdyby wp³aty sz³y w benchmark", lo, "Wartoœæ w benchmarku", RGB(39, 182, 232)
+    FormatChartAxes co.Chart, "#,##0"
+
+    Set co = ws.ChartObjects.Add(leftPos + w + 12, topPos, ws.Range("F12:H12").Width + 40, h)
+    co.Name = "WykresStopyZwrotu"
+    PrepareLineChart co.Chart, "Skumulowana stopa zwrotu (TWR) vs benchmark"
+    AddLineSeries co.Chart, "Portfel", lo, "Stopa portfela", RGB(245, 158, 11)
+    AddLineSeries co.Chart, "Benchmark", lo, "Stopa benchmarku", RGB(39, 182, 232)
+    FormatChartAxes co.Chart, "0.0%"
+End Sub
+
+Private Sub PrepareLineChart(ByVal ch As Chart, ByVal title As String)
+    ch.ChartType = xlLine
+    Do While ch.SeriesCollection.Count > 0
+        ch.SeriesCollection(1).Delete
+    Loop
+    ch.PlotVisibleOnly = False          ' dane historii s¹ w ukrytych kolumnach
+    ch.DisplayBlanksAs = xlInterpolated
+    ch.HasTitle = True
+    ch.ChartTitle.Text = title
+    ch.ChartTitle.Font.Size = 12
+    ch.ChartTitle.Font.Bold = True
+    ch.HasLegend = True
+    ch.Legend.Position = xlLegendPositionBottom
+    ch.ChartArea.Font.Name = "Arial"
+    ch.ChartArea.Format.Line.Visible = msoFalse
+End Sub
+
+Private Sub AddLineSeries(ByVal ch As Chart, ByVal seriesName As String, ByVal lo As ListObject, _
+                          ByVal valueColumn As String, ByVal colorRGB As Long)
+    Dim s As Series
+    Set s = ch.SeriesCollection.NewSeries
+    s.Name = seriesName
+    s.XValues = lo.ListColumns("Data").DataBodyRange
+    s.Values = lo.ListColumns(valueColumn).DataBodyRange
+    s.Format.Line.ForeColor.RGB = colorRGB
+    s.Format.Line.Weight = 2.25
+    s.MarkerStyle = xlMarkerStyleCircle
+    s.MarkerSize = 4
+    s.MarkerBackgroundColor = colorRGB
+    s.MarkerForegroundColor = colorRGB
+End Sub
+
+Private Sub FormatChartAxes(ByVal ch As Chart, ByVal valueFormat As String)
+    On Error Resume Next
+    With ch.Axes(xlCategory)
+        .CategoryType = xlTimeScale
+        .BaseUnit = xlDays
+        .TickLabels.NumberFormat = "dd.mm"
+    End With
+    ch.Axes(xlValue).TickLabels.NumberFormat = valueFormat
+    ch.Axes(xlValue).HasMajorGridlines = True
+    ch.Axes(xlValue).MajorGridlines.Format.Line.ForeColor.RGB = RGB(226, 232, 240)
 End Sub
