@@ -95,7 +95,7 @@ Arkusz **Nowe transakcje**, jeden wiersz = jedna operacja, potem **ZAPISZ TRANSA
 
 ## Import z Trading 212
 
-Przycisk **IMPORTUJ Z TRADING 212** (Dashboard, Dywidendy) wczytuje pliki CSV z historii konta
+Przycisk **IMPORT TRADING 212** (Dashboard, Dywidendy) wczytuje pliki CSV z historii konta
 (Trading 212 → Historia → Eksportuj; można zaznaczyć kilka plików naraz):
 
 - **dywidendy** z całej historii → tabela `DywidendyHistoria` (kwota netto i podatek pobrany u źródła),
@@ -105,3 +105,16 @@ Przycisk **IMPORTUJ Z TRADING 212** (Dashboard, Dywidendy) wczytuje pliki CSV z 
 
 Każdy zaimportowany wiersz ma klucz (kolumna S w Transakcjach, kolumna „Klucz” w tabelach), więc ponowny
 import tych samych plików niczego nie dubluje. Dzień salda początkowego jest zapisany w `Dane!AB32`.
+
+## Import z XTB
+
+Przycisk **IMPORT XTB** wczytuje pliki XLSX z historii rachunków XTB (zwykły, IKE, IKZE):
+
+- **dywidendy** → `DywidendyHistoria` ze źródłem „XTB”, „XTB IKE” albo „XTB IKZE”
+  (IKE i IKZE są pomijane w szacunku podatku Belki),
+- **zamknięte pozycje** z rachunku zwykłego sprzed dnia salda → `WynikiSprzedazy`,
+- **zakupy, sprzedaże, wpłaty i wypłaty** po dniu salda → rejestr transakcji.
+  Przelewy między rachunkami XTB (np. wpłata na IKE z rachunku zwykłego) są pomijane.
+
+Oba importy rozpoznają operacje wpisane wcześniej ręcznie w „Nowe transakcje” (ta sama operacja,
+instrument, liczba jednostek i kwota) i dopisują do nich klucz zamiast dodawać drugi wiersz.
