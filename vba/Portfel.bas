@@ -2711,7 +2711,7 @@ End Function
 ' IMPORT Z TRADING 212 (pliki CSV z historii konta)
 ' - dywidendy (ca³a historia) -> tabela DywidendyHistoria, z podatkiem u Ÿród³a,
 ' - wynik sprzeda¿y sprzed salda pocz¹tkowego -> tabela WynikiSprzedazy (Belka),
-' - kupno, sprzeda¿, wp³aty i wyp³aty PO dniu salda pocz¹tkowego (bez wydatków kart¹)
+' - kupno, sprzeda¿, wp³aty i wyp³aty (tak¿e wydatki kart¹) PO dniu salda pocz¹tkowego
 '   -> rejestr w arkuszu Transakcje (wczeœniejsze s¹ ju¿ w saldzie pocz¹tkowym).
 ' Ka¿dy wiersz ma klucz, wiêc ponowny import tych samych plików niczego nie dubluje.
 ' ---------------------------------------------------------------------------
@@ -2821,9 +2821,9 @@ Public Sub ImportTrading212()
                 Select Case action
                     Case "Market buy", "Limit buy", "Stop buy": tx.Operation = OP_BUY
                     Case "Market sell", "Limit sell", "Stop sell": tx.Operation = OP_SELL
-                    Case "Deposit": tx.Operation = OP_DEPOSIT: tx.DisplayName = vbNullString
-                    Case "Withdrawal": tx.Operation = OP_WITHDRAW: tx.DisplayName = vbNullString
-                    ' Wydatki kart¹ i cashback nie s¹ liczone (decyzja u¿ytkownika).
+                    ' Wydatki kart¹ = wyp³ata z portfela, cashback = wp³ata (pomniejsza wyp³aty).
+                    Case "Deposit", "Spending cashback": tx.Operation = OP_DEPOSIT: tx.DisplayName = vbNullString
+                    Case "Withdrawal", "Card debit": tx.Operation = OP_WITHDRAW: tx.DisplayName = vbNullString
                 End Select
                 If Len(tx.Operation) > 0 And tx.Amount > 0 Then
                     If (tx.Operation = OP_BUY Or tx.Operation = OP_SELL) And quoteRow = 0 Then
